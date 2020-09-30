@@ -1,0 +1,65 @@
+/*
+ * Copyright 2020 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *  https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+java_library_host {
+    name: "ed25519",
+    srcs: ["ed25519-java/src/**/*.java"],
+}
+
+java_library_host {
+    name: "numbers-java",
+    srcs: ["numbers-java/src/main/**/*.java"],
+}
+
+java_library_host {
+    name: "cbor",
+    srcs: ["CBOR-Java/src/main/**/*.java"],
+    static_libs: ["numbers-java"],
+}
+
+java_library_host {
+    name: "cbor-cose",
+    srcs: ["COSE-JAVA/src/main/**/*.java"],
+    static_libs: ["cbor",
+                  "ed25519"],
+}
+
+java_library_host {
+    name: "remote-provisioning-cbor",
+    srcs: ["CertificateRequestSerializer.java",
+           "CertificateRequestDeserializer.java",
+           "CborUtil.java",
+           "CryptoUtil.java",
+           "DeviceInfo.java",
+           "EekCertChainDeserializer.java",
+           "EekCertChainSerializer.java",
+           "ProtectedDataPayload.java",
+           "CborException.java",
+           "CryptoException.java"],
+    static_libs: ["cbor-cose"],
+}
+
+java_test_host {
+    name: "RemoteProvisioningCborTest",
+    srcs: ["test/CertificateRequestDeserializerTest.java",
+           "test/EekCertChainTest.java"],
+    test_config: "AndroidTest.xml",
+    test_suites: ["general-tests"],
+    libs: ["tradefed",],
+    static_libs: ["cbor-cose",
+                  "junit",
+                  "remote-provisioning-cbor",],
+}

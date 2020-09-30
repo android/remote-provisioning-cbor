@@ -1,0 +1,10 @@
+# Remote Provisioning CBOR
+This library is intended for use in Android and in any servers that implement remote provisioning
+of certificates in order to handle the serialization/deserialization of relevant data in CBOR.
+
+
+## Dependencies
+https://github.com/cose-wg/COSE-JAVA
+https://github.com/str4d/ed25519-java
+https://github.com/peteroupc/numbers-java
+https://github.com/peteroupc/CBOR-Java

@@ -1,0 +1,6 @@
+<configuration description="Config for CBOR serialization/deserialization tests">
+    <option name="test-suite-tag" value="RemoteProvisioningCborTest" />
+    <test class="com.android.tradefed.testtype.HostTest" >
+        <option name="jar" value="RemoteProvisioningCborTest.jar" />
+    </test>
+</configuration>

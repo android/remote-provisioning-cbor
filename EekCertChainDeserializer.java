@@ -19,6 +19,7 @@ package com.google.remote.cbor;
 import com.google.remote.cbor.CryptoUtil;
 import com.upokecenter.cbor.CBORObject;
 import com.upokecenter.cbor.CBORType;
+import org.bouncycastle.crypto.params.X25519PublicKeyParameters;
 
 import java.security.*;
 import java.util.ArrayList;
@@ -30,11 +31,12 @@ import java.util.ArrayList;
  */
 public class EekCertChainDeserializer {
 
-    private ArrayList<PublicKey> keyChain;
+    private ArrayList<PublicKey> signingKeyChain;
+    private X25519PublicKeyParameters eek;
 
     public EekCertChainDeserializer(byte[] cborEncodedEekCertChain) throws CborException,
                                                                            CryptoException{
-        keyChain = new ArrayList<PublicKey>();
+        signingKeyChain = new ArrayList<PublicKey>();
         CBORObject eekChain = CBORObject.DecodeFromBytes(cborEncodedEekCertChain);
         if (eekChain.getType() != CBORType.Array) {
             throw new CborException("cborEncodedEekCertChain decodes to the wrong type",
@@ -51,19 +53,19 @@ public class EekCertChainDeserializer {
                 throw new CryptoException("Certificate " + (i-1) + " verification of certificate "
                                           + i + " fails.", CryptoException.VERIFICATION_FAILURE);
             }
-            keyChain.add(CryptoUtil.getKeyFromCert(eekChain.get(i-1)));
+            signingKeyChain.add(CryptoUtil.getEd25519PublicKeyFromCert(eekChain.get(i-1)));
             if (i == eekChain.size() - 1) {
-                keyChain.add(CryptoUtil.getKeyFromCert(eekChain.get(i)));
+                eek = CryptoUtil.getX25519PublicKeyFromCert(eekChain.get(i));
             }
         }
     }
 
-    public PublicKey getEek() {
-        return keyChain.get(keyChain.size() - 1);
+    public X25519PublicKeyParameters getEek() {
+        return eek;
     }
 
-    public ArrayList<PublicKey> getKeyChain() {
-        return keyChain;
+    public ArrayList<PublicKey> getSigningKeyChain() {
+        return signingKeyChain;
     }
 
 }

@@ -35,7 +35,6 @@ import COSE.CoseException;
 
 import java.math.BigInteger;
 import java.security.*;
-import java.security.interfaces.XECPublicKey;
 import java.security.spec.InvalidKeySpecException;
 import java.util.ArrayList;
 

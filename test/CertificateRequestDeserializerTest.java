@@ -18,6 +18,8 @@ package com.google.remote.cbor;
 
 import junit.framework.TestCase;
 import net.i2p.crypto.eddsa.EdDSASecurityProvider;
+import org.bouncycastle.crypto.AsymmetricCipherKeyPair;
+import org.bouncycastle.crypto.params.X25519PublicKeyParameters;
 import org.junit.*;
 import org.junit.Test;
 import org.junit.runner.*;
@@ -33,7 +35,6 @@ import COSE.Sign1Message;
 
 import java.math.BigInteger;
 import java.security.*;
-import java.security.interfaces.XECPublicKey;
 import java.security.spec.ECPoint;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -53,7 +54,7 @@ public class CertificateRequestDeserializerTest {
     private OneKey deviceKeyPair;
     private OneKey[] keysToSign;
     private Sign1Message[] bcc;
-    private KeyPair serverKeyPair;
+    private AsymmetricCipherKeyPair serverKeyPair;
     private OneKey oemKeyPair;
     private Sign1Message[] additionalDkSignatureChain;
 
@@ -78,7 +79,7 @@ public class CertificateRequestDeserializerTest {
         bcc = new Sign1Message[] { bccCert };
 
         // Generate the EEK server key pair
-        serverKeyPair = genX25519();
+        serverKeyPair = CryptoUtil.genX25519();
 
         // Generate the additional device key signing certificates.
         // OEM certificate is self signed; device certificate is signed by the OEM key pair
@@ -99,7 +100,7 @@ public class CertificateRequestDeserializerTest {
 
         // Build the CBOR blob
         certificateRequestSerialized = new CertificateRequestSerializer.Builder(
-                                (XECPublicKey) serverKeyPair.getPublic())
+                                (X25519PublicKeyParameters) serverKeyPair.getPublic())
                                 .setDeviceInfo(deviceInfo)
                                 .setPublicKeys(keysToSign)
                                 .setMacKey(mac)
@@ -111,11 +112,6 @@ public class CertificateRequestDeserializerTest {
                                 .build()
                                 .buildCertificateRequest();
         certRequest = new CertificateRequestDeserializer(certificateRequestSerialized);
-    }
-
-    private KeyPair genX25519() throws Exception {
-        KeyPairGenerator kpg = KeyPairGenerator.getInstance("X25519");
-        return kpg.generateKeyPair();
     }
 
     private KeyPair genEd25519() throws Exception {
@@ -167,7 +163,7 @@ public class CertificateRequestDeserializerTest {
 
     @Test
     public void TestWrongEekFails() throws Exception {
-        KeyPair fakeKeyPair = genX25519();
+        AsymmetricCipherKeyPair fakeKeyPair = CryptoUtil.genX25519();
         try {
             ProtectedDataPayload payload =
                 new ProtectedDataPayload(
@@ -222,7 +218,7 @@ public class CertificateRequestDeserializerTest {
     @Test
     public void TestAdditionalSignatureMapEmptyPasses() throws Exception {
         certificateRequestSerialized = new CertificateRequestSerializer.Builder(
-                            (XECPublicKey) serverKeyPair.getPublic())
+                            (X25519PublicKeyParameters) serverKeyPair.getPublic())
                             .setDeviceInfo(deviceInfo)
                             .setPublicKeys(keysToSign)
                             .setMacKey(mac)
@@ -258,7 +254,7 @@ public class CertificateRequestDeserializerTest {
         additionalDkSignatureChain = new Sign1Message[] { signingCert, deviceCert };
 
         certificateRequestSerialized = new CertificateRequestSerializer.Builder(
-                            (XECPublicKey) serverKeyPair.getPublic())
+                            (X25519PublicKeyParameters) serverKeyPair.getPublic())
                             .setDeviceInfo(deviceInfo)
                             .setPublicKeys(keysToSign)
                             .setMacKey(mac)
@@ -300,7 +296,7 @@ public class CertificateRequestDeserializerTest {
         additionalDkSignatureChain = new Sign1Message[] { signingCert, deviceCert };
 
         certificateRequestSerialized = new CertificateRequestSerializer.Builder(
-                            (XECPublicKey) serverKeyPair.getPublic())
+                            (X25519PublicKeyParameters) serverKeyPair.getPublic())
                             .setDeviceInfo(deviceInfo)
                             .setPublicKeys(keysToSign)
                             .setMacKey(mac)
@@ -342,7 +338,7 @@ public class CertificateRequestDeserializerTest {
         additionalDkSignatureChain = new Sign1Message[] { signingCert, deviceCert };
 
         certificateRequestSerialized = new CertificateRequestSerializer.Builder(
-                            (XECPublicKey) serverKeyPair.getPublic())
+                            (X25519PublicKeyParameters) serverKeyPair.getPublic())
                             .setDeviceInfo(deviceInfo)
                             .setPublicKeys(keysToSign)
                             .setMacKey(mac)

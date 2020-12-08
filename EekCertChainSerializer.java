@@ -22,6 +22,7 @@ import com.google.remote.cbor.CryptoUtil;
 import com.upokecenter.cbor.CBORObject;
 import com.upokecenter.cbor.CBORType;
 import net.i2p.crypto.eddsa.EdDSAPrivateKey;
+import org.bouncycastle.crypto.params.X25519PublicKeyParameters;
 
 import COSE.CoseException;
 import COSE.KeyKeys;
@@ -46,7 +47,8 @@ public class EekCertChainSerializer {
      */
     public EekCertChainSerializer(byte[] cborEncodedCerts,
                                   OneKey intSigningKey,
-                                  XECPublicKey eek) throws CborException, CryptoException {
+                                  X25519PublicKeyParameters eek)
+                                  throws CborException, CryptoException {
         eekChain = CBORObject.DecodeFromBytes(cborEncodedCerts);
         if (eekChain.getType() != CBORType.Array) {
             throw new CborException("cborEncodedCerts decodes to the wrong type",
@@ -71,7 +73,7 @@ public class EekCertChainSerializer {
      *
      * @return a CBOR encoded EEK certificate chain byte array
      */
-    public static byte[] generateEekChain(XECPublicKey eek) throws CryptoException {
+    public static byte[] generateEekChain(X25519PublicKeyParameters eek) throws CryptoException {
         try {
             OneKey eekRootKeyPair = OneKey.generateKey(KeyKeys.OKP_Ed25519);
             OneKey eekIntKeyPair = OneKey.generateKey(KeyKeys.OKP_Ed25519);

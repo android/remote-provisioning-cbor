@@ -21,6 +21,8 @@ import com.google.remote.cbor.CryptoException;
 import com.google.remote.cbor.CryptoUtil;
 import com.google.remote.cbor.DeviceInfo;
 import com.upokecenter.cbor.CBORObject;
+import org.bouncycastle.crypto.AsymmetricCipherKeyPair;
+import org.bouncycastle.crypto.params.X25519PublicKeyParameters;
 
 import COSE.AlgorithmID;
 import COSE.Attribute;
@@ -32,7 +34,6 @@ import COSE.OneKey;
 import COSE.Sign1Message;
 
 import java.security.*;
-import java.security.interfaces.XECPublicKey;
 
 /*
  * The main purpose of this class is to help test the CertificateRequestDeserializer. A server or
@@ -45,24 +46,24 @@ import java.security.interfaces.XECPublicKey;
  */
 public class CertificateRequestSerializer {
     private CBORObject mDeviceInfo;
-    private XECPublicKey mEek;
+    private X25519PublicKeyParameters mEek;
     private CBORObject mPublicKeys;
     private CBORObject mMacKey;
     private CBORObject mChallenge;
     private CBORObject mBcc;
     private CBORObject mAdditionalDkSignatures;
     private OneKey mDkPriv;
-    private KeyPair mEphemeralKeyPair;
+    private AsymmetricCipherKeyPair mEphemeralKeyPair;
 
     public CertificateRequestSerializer(CBORObject deviceInfo,
-                                         XECPublicKey eek,
+                                         X25519PublicKeyParameters eek,
                                          CBORObject publicKeys,
                                          CBORObject macKey,
                                          CBORObject challenge,
                                          CBORObject bcc,
                                          OneKey dkPriv,
                                          CBORObject additionalDkSignatures,
-                                         KeyPair ephemeralKeyPair) {
+                                         AsymmetricCipherKeyPair ephemeralKeyPair) {
         mDeviceInfo = deviceInfo;
         mEek = eek;
         mPublicKeys = publicKeys;
@@ -74,8 +75,8 @@ public class CertificateRequestSerializer {
         mEphemeralKeyPair = ephemeralKeyPair;
     }
 
-    public XECPublicKey getEphemeralPubKey() {
-        return (XECPublicKey) mEphemeralKeyPair.getPublic();
+    public X25519PublicKeyParameters getEphemeralPubKey() {
+        return (X25519PublicKeyParameters) mEphemeralKeyPair.getPublic();
     }
 
     // publicKeys are the keys to be signed
@@ -178,7 +179,7 @@ public class CertificateRequestSerializer {
      */
     public final static class Builder {
         private CBORObject mDeviceInfo;
-        private XECPublicKey mEek;
+        private X25519PublicKeyParameters mEek;
         private CBORObject mPublicKeys;
         private CBORObject mMacKey;
         private CBORObject mChallenge;
@@ -190,7 +191,7 @@ public class CertificateRequestSerializer {
          * Builder constructor that takes an X25519 public key as an input parameter. This key
          * corresponds to the private key held by the server.
          */
-        public Builder(XECPublicKey eek) {
+        public Builder(X25519PublicKeyParameters eek) {
             mEek = eek;
         }
 
@@ -271,23 +272,16 @@ public class CertificateRequestSerializer {
         }
 
         public CertificateRequestSerializer build() throws CryptoException {
-            try {
-                KeyPairGenerator kpg = KeyPairGenerator.getInstance("X25519");
-                KeyPair ephemeralKeyPair = kpg.generateKeyPair();
-                return new CertificateRequestSerializer(
-                                mDeviceInfo,
-                                mEek,
-                                mPublicKeys,
-                                mMacKey,
-                                mChallenge,
-                                mBcc,
-                                mDkPriv,
-                                mAdditionalDkSignatures,
-                                ephemeralKeyPair);
-            } catch (NoSuchAlgorithmException e) {
-                throw new CryptoException("No SPI for X25519",
-                                          e, CryptoException.NO_SUCH_ALGORITHM);
-            }
+            return new CertificateRequestSerializer(
+                            mDeviceInfo,
+                            mEek,
+                            mPublicKeys,
+                            mMacKey,
+                            mChallenge,
+                            mBcc,
+                            mDkPriv,
+                            mAdditionalDkSignatures,
+                            CryptoUtil.genX25519());
         }
     }
 }

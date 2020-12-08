@@ -20,6 +20,11 @@ java_library_host {
 }
 
 java_library_host {
+    name: "bouncy_castle_full",
+    srcs: ["bc-java/core/src/main/java/**/*.java"],
+}
+
+java_library_host {
     name: "numbers-java",
     srcs: ["numbers-java/src/main/**/*.java"],
 }
@@ -49,7 +54,8 @@ java_library_host {
            "ProtectedDataPayload.java",
            "CborException.java",
            "CryptoException.java"],
-    static_libs: ["cbor-cose"],
+    static_libs: ["cbor-cose",
+                  "bouncy_castle_full",],
 }
 
 java_test_host {

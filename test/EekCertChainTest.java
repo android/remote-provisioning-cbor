@@ -23,6 +23,8 @@ import com.upokecenter.cbor.CBORObject;
 import junit.framework.TestCase;
 import net.i2p.crypto.eddsa.EdDSAPrivateKey;
 import net.i2p.crypto.eddsa.EdDSASecurityProvider;
+import org.bouncycastle.crypto.AsymmetricCipherKeyPair;
+import org.bouncycastle.crypto.params.X25519PublicKeyParameters;
 import org.junit.*;
 import org.junit.Test;
 import org.junit.runner.*;
@@ -38,7 +40,6 @@ import COSE.Sign1Message;
 
 import java.math.BigInteger;
 import java.security.*;
-import java.security.interfaces.XECPublicKey;
 import java.security.spec.ECPoint;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -48,13 +49,8 @@ public class EekCertChainTest {
 
     private OneKey eekRootKeyPair;
     private OneKey eekIntKeyPair;
-    private KeyPair eekKeyPair;
+    private AsymmetricCipherKeyPair eekKeyPair;
     private EekCertChainSerializer serializer;
-
-    private KeyPair genX25519() throws Exception {
-        KeyPairGenerator kpg = KeyPairGenerator.getInstance("X25519");
-        return kpg.generateKeyPair();
-    }
 
     @BeforeClass
     public static void beforeAllTestMethods() {
@@ -67,7 +63,7 @@ public class EekCertChainTest {
         eekRootKeyPair.add(KeyKeys.Algorithm, AlgorithmID.EDDSA.AsCBOR());
         eekIntKeyPair = OneKey.generateKey(KeyKeys.OKP_Ed25519);
         eekIntKeyPair.add(KeyKeys.Algorithm, AlgorithmID.EDDSA.AsCBOR());
-        eekKeyPair = genX25519();
+        eekKeyPair = CryptoUtil.genX25519();
         CBORObject certArray = CBORObject.NewArray();
         certArray.Add(
             CryptoUtil.createCertificateEd25519(eekRootKeyPair, eekRootKeyPair.PublicKey()));
@@ -76,15 +72,15 @@ public class EekCertChainTest {
         serializer =
             new EekCertChainSerializer(certArray.EncodeToBytes(),
                                        eekIntKeyPair,
-                                       (XECPublicKey) eekKeyPair.getPublic());
+                                       (X25519PublicKeyParameters) eekKeyPair.getPublic());
     }
 
     @Test
     public void testSerializeDeserialize() throws Exception {
         byte[] serialized = serializer.buildEekChain();
         EekCertChainDeserializer deserializer = new EekCertChainDeserializer(serialized);
-        XECPublicKey expected = (XECPublicKey) eekKeyPair.getPublic();
-        XECPublicKey actual = (XECPublicKey) deserializer.getEek();
-        assertTrue(Arrays.equals(expected.getU().toByteArray(), actual.getU().toByteArray()));
+        X25519PublicKeyParameters expected = (X25519PublicKeyParameters) eekKeyPair.getPublic();
+        X25519PublicKeyParameters actual = (X25519PublicKeyParameters) deserializer.getEek();
+        assertTrue(Arrays.equals(expected.getEncoded(), actual.getEncoded()));
     }
 }

@@ -21,6 +21,8 @@ import com.google.remote.cbor.CryptoUtil;
 import com.google.remote.cbor.ProtectedDataPayload;
 import com.upokecenter.cbor.CBORObject;
 import com.upokecenter.cbor.CBORType;
+import org.bouncycastle.crypto.AsymmetricCipherKeyPair;
+import org.bouncycastle.crypto.params.X25519PublicKeyParameters;
 
 import COSE.AlgorithmID;
 import COSE.HeaderKeys;
@@ -28,7 +30,6 @@ import COSE.KeyKeys;
 import COSE.Message;
 
 import java.security.*;
-import java.security.interfaces.XECPublicKey;
 
 /*
  * This class implements some of the COSE structure serialization / deserialization code that is not
@@ -48,8 +49,8 @@ public class CborUtil {
     private static final int COSE_RECIPIENT_CIPHERTEXT_INDEX = 2;
 
     public static CBORObject encodeEncryptMessage(byte[] plaintext, 
-                                                  KeyPair ephemeralKeyPair,
-                                                  XECPublicKey eek)
+                                                  AsymmetricCipherKeyPair ephemeralKeyPair,
+                                                  X25519PublicKeyParameters eek)
                                                   throws CborException, CryptoException {
         // Generate an IV and derive the sender key
         SecureRandom rand = new SecureRandom();
@@ -79,7 +80,7 @@ public class CborUtil {
         // This adds the kid too, which is not specified for this Key in the spec
         unprotectedHeadersRecip.Add(
             HeaderKeys.ECDH_EPK.AsCBOR(),
-            CryptoUtil.cborEncodeX25519PubKey((XECPublicKey) ephemeralKeyPair.getPublic()));
+            CryptoUtil.cborEncodeX25519PubKey((X25519PublicKeyParameters) ephemeralKeyPair.getPublic()));
         unprotectedHeadersRecip.Add(HeaderKeys.KID.AsCBOR(), CryptoUtil.digestX25519(eek));
         recipient.Add(protectedHeadersRecip.EncodeToBytes());
         recipient.Add(unprotectedHeadersRecip);
@@ -158,7 +159,8 @@ public class CborUtil {
      *
      * @return CBORObject the content field in the cborProtectedData object as a CBOR array
      */
-    public static CBORObject decodeEncryptMessage(byte[] cborProtectedData, KeyPair eek)
+    public static CBORObject decodeEncryptMessage(byte[] cborProtectedData,
+                                                  AsymmetricCipherKeyPair eek)
             throws CborException, CryptoException {
         CBORObject encMsg = CBORObject.DecodeFromBytes(cborProtectedData);
         if (encMsg.getType() != CBORType.Array) {
@@ -188,7 +190,7 @@ public class CborUtil {
             ephemeralPublicKeyCbor.get(KeyKeys.OKP_X.AsCBOR()).GetByteString();
         byte[] derivedKey =
             CryptoUtil.deriveSharedKeyReceive(
-                eek, (XECPublicKey) CryptoUtil.byteArrayToX25519PublicKey(ephemeralPublicKey));
+                eek, CryptoUtil.byteArrayToX25519PublicKey(ephemeralPublicKey));
         byte[] iv = unprotectedHeaders.get(HeaderKeys.IV.AsCBOR()).GetByteString();
         return CBORObject.DecodeFromBytes(CryptoUtil.decrypt(content, aad, derivedKey, iv));
     }

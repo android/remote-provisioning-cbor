@@ -24,8 +24,8 @@ import com.google.remote.cbor.ProtectedDataPayload;
 import com.upokecenter.cbor.CBORObject;
 import com.upokecenter.cbor.CBORType;
 import net.i2p.crypto.eddsa.EdDSAPublicKey;
+import org.bouncycastle.crypto.AsymmetricCipherKeyPair;
 
-import COSE.MAC0Message;
 import COSE.OneKey;
 import COSE.KeyKeys;
 import COSE.Message;
@@ -33,11 +33,7 @@ import COSE.MessageTag;
 import COSE.Sign1Message;
 import COSE.CoseException;
 
-import java.math.BigInteger;
 import java.security.*;
-import java.security.interfaces.XECPublicKey;
-import java.security.spec.InvalidKeySpecException;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
@@ -94,7 +90,7 @@ public class ProtectedDataPayload {
     public ProtectedDataPayload(byte[] cborPayload,
                                 byte[] challenge,
                                 byte[] deviceInfo,
-                                KeyPair eek) throws CborException, CryptoException {
+                                AsymmetricCipherKeyPair eek) throws CborException, CryptoException {
         mSignerIdToKey = new HashMap<Integer, byte[]>();
         decryptAndValidateProtectedData(cborPayload, challenge, deviceInfo, eek);
     }
@@ -248,7 +244,7 @@ public class ProtectedDataPayload {
                                               CryptoException.VERIFICATION_FAILURE);
                 }
                 EdDSAPublicKey oemRoot =
-                    (EdDSAPublicKey) CryptoUtil.getKeyFromCert(
+                    (EdDSAPublicKey) CryptoUtil.getEd25519PublicKeyFromCert(
                         certChain.get(ADDITIONAL_DK_SIGNATURE_ROOT_INDEX));
                 this.addSignerAndKey(key.AsInt32Value(), oemRoot.getAbyte());
             }
@@ -274,7 +270,7 @@ public class ProtectedDataPayload {
     private void decryptAndValidateProtectedData(byte[] cborProtectedData,
                                                          byte[] challenge,
                                                          byte[] deviceInfo,
-                                                         KeyPair eek)
+                                                         AsymmetricCipherKeyPair eek)
                                                          throws CborException, CryptoException {
         CBORObject protectedDataPayload = CborUtil.decodeEncryptMessage(cborProtectedData, eek);
         if (protectedDataPayload == null) {

@@ -104,6 +104,16 @@ public class DeviceInfo {
     }
 
     @Override
+    public int hashCode() {
+        int result = mBrand != null ? mBrand.hashCode() : 0;
+        result = 31 * result + (mManufacturer != null ? mManufacturer.hashCode() : 0);
+        result = 31 * result + (mProduct != null ? mProduct.hashCode() : 0);
+        result = 31 * result + (mModel != null ? mModel.hashCode() : 0);
+        result = 31 * result + (mBoard != null ? mBoard.hashCode() : 0);
+        return result;
+    }
+
+    @Override
     public String toString() {
         StringBuilder str = new StringBuilder();
         str.append("Device Info:\n");

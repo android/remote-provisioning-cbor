@@ -28,8 +28,6 @@ import COSE.CoseException;
 import COSE.KeyKeys;
 import COSE.OneKey;
 
-import java.security.interfaces.XECPublicKey;
-
 /*
  * This class is to be used to generate EEK certificate chains to send to a device so that the
  * device can use the X25519 public key contained in the leaf certificate to encrypt the payload it

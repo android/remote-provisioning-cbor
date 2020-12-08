@@ -14,9 +14,10 @@
  * limitations under the License.
  */
  
-package com.google.remote.cbor;
+package remoteprovisioning;
 
-import com.google.remote.cbor.CryptoUtil;
+import remoteprovisioning.CryptoUtil;
+
 import com.upokecenter.cbor.CBORObject;
 import com.upokecenter.cbor.CBORType;
 import org.bouncycastle.crypto.params.X25519PublicKeyParameters;

@@ -14,11 +14,12 @@
  * limitations under the License.
  */
 
-package com.google.remote.cbor;
+package remoteprovisioning;
 
-import com.google.remote.cbor.CborException;
-import com.google.remote.cbor.CborUtil;
-import com.google.remote.cbor.CryptoUtil;
+import remoteprovisioning.CborException;
+import remoteprovisioning.CborUtil;
+import remoteprovisioning.CryptoUtil;
+
 import com.upokecenter.cbor.CBORObject;
 import com.upokecenter.cbor.CBORType;
 import net.i2p.crypto.eddsa.EdDSAPrivateKey;

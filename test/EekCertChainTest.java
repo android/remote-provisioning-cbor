@@ -14,11 +14,12 @@
  * limitations under the License.
  */
 
-package com.google.remote.cbor;
+package remoteprovisioning;
 
-import com.google.remote.cbor.CryptoUtil;
-import com.google.remote.cbor.EekCertChainDeserializer;
-import com.google.remote.cbor.EekCertChainSerializer;
+import remoteprovisioning.CryptoUtil;
+import remoteprovisioning.EekCertChainDeserializer;
+import remoteprovisioning.EekCertChainSerializer;
+
 import com.upokecenter.cbor.CBORObject;
 import junit.framework.TestCase;
 import net.i2p.crypto.eddsa.EdDSAPrivateKey;

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.google.remote.cbor;
+package remoteprovisioning;
 
 import java.lang.StringBuilder;
 

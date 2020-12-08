@@ -14,12 +14,13 @@
  * limitations under the License.
  */
 
-package com.google.remote.cbor;
+package remoteprovisioning;
 
-import com.google.remote.cbor.CborException;
-import com.google.remote.cbor.CryptoException;
-import com.google.remote.cbor.CryptoUtil;
-import com.google.remote.cbor.DeviceInfo;
+import remoteprovisioning.CborException;
+import remoteprovisioning.CryptoException;
+import remoteprovisioning.CryptoUtil;
+import remoteprovisioning.DeviceInfo;
+
 import com.upokecenter.cbor.CBORObject;
 import org.bouncycastle.crypto.AsymmetricCipherKeyPair;
 import org.bouncycastle.crypto.params.X25519PublicKeyParameters;

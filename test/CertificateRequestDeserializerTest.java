@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.google.remote.cbor;
+package remoteprovisioning;
 
 import junit.framework.TestCase;
 import net.i2p.crypto.eddsa.EdDSASecurityProvider;

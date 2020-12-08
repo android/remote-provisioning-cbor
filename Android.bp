@@ -44,16 +44,7 @@ java_library_host {
 
 java_library_host {
     name: "remote-provisioning-cbor",
-    srcs: ["CertificateRequestSerializer.java",
-           "CertificateRequestDeserializer.java",
-           "CborUtil.java",
-           "CryptoUtil.java",
-           "DeviceInfo.java",
-           "EekCertChainDeserializer.java",
-           "EekCertChainSerializer.java",
-           "ProtectedDataPayload.java",
-           "CborException.java",
-           "CryptoException.java"],
+    srcs: ["src/*.java"],
     static_libs: ["cbor-cose",
                   "bouncy_castle_full",],
 }

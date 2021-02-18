@@ -116,11 +116,6 @@ public class CertificateRequestDeserializerTest {
     certRequest = new CertificateRequestDeserializer(certificateRequestSerialized);
   }
 
-  private KeyPair genEd25519() throws Exception {
-    KeyPairGenerator kpg = KeyPairGenerator.getInstance("Ed25519");
-    return kpg.generateKeyPair();
-  }
-
   @Test
   public void TestSerializeDeserialize() throws Exception {
     ProtectedDataPayload payload =

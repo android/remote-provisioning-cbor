@@ -538,8 +538,6 @@ public class CryptoUtil {
   public static PublicKey byteArrayToEd25519PublicKey(byte[] xCoord) throws CryptoException {
     try {
       KeyFactory kf = KeyFactory.getInstance("EdDSA", "EdDSA");
-      // EdDSANamedCurveSpec paramSpec =
-      //   new EdDSANamedCurveSpec(EdDSANamedCurveTable.ED_25519_CURVE_SPEC);
       EdDSAPublicKeySpec pubSpec =
           new EdDSAPublicKeySpec(xCoord, EdDSANamedCurveTable.ED_25519_CURVE_SPEC);
       return kf.generatePublic(pubSpec);

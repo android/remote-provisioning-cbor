@@ -16,13 +16,6 @@
 
 package remoteprovisioning;
 
-import remoteprovisioning.CborException;
-import remoteprovisioning.CryptoException;
-import remoteprovisioning.CryptoUtil;
-
-import com.upokecenter.cbor.CBORObject;
-import org.bouncycastle.crypto.AsymmetricCipherKeyPair;
-import org.bouncycastle.crypto.params.X25519PublicKeyParameters;
 
 import COSE.AlgorithmID;
 import COSE.Attribute;
@@ -32,10 +25,12 @@ import COSE.KeyKeys;
 import COSE.MAC0Message;
 import COSE.OneKey;
 import COSE.Sign1Message;
-
+import com.upokecenter.cbor.CBORObject;
 import java.security.*;
 import java.security.interfaces.ECPublicKey;
 import java.util.Arrays;
+import org.bouncycastle.crypto.AsymmetricCipherKeyPair;
+import org.bouncycastle.crypto.params.X25519PublicKeyParameters;
 
 /*
  * The main purpose of this class is to help test the CertificateRequestDeserializer. A server or
@@ -47,239 +42,241 @@ import java.util.Arrays;
  * properly encoded CBOR byte array.
  */
 public class CertificateRequestSerializer {
+  private CBORObject mDeviceInfo;
+  private X25519PublicKeyParameters mEek;
+  private CBORObject mPublicKeys;
+  private CBORObject mMacKey;
+  private CBORObject mChallenge;
+  private CBORObject mBcc;
+  private CBORObject mAdditionalDkSignatures;
+  private OneKey mDkPriv;
+  private AsymmetricCipherKeyPair mEphemeralKeyPair;
+
+  public CertificateRequestSerializer(
+      CBORObject deviceInfo,
+      X25519PublicKeyParameters eek,
+      CBORObject publicKeys,
+      CBORObject macKey,
+      CBORObject challenge,
+      CBORObject bcc,
+      OneKey dkPriv,
+      CBORObject additionalDkSignatures,
+      AsymmetricCipherKeyPair ephemeralKeyPair) {
+    mDeviceInfo = deviceInfo;
+    mEek = eek;
+    mPublicKeys = publicKeys;
+    mMacKey = macKey;
+    mChallenge = challenge;
+    mBcc = bcc;
+    mDkPriv = dkPriv;
+    mAdditionalDkSignatures = additionalDkSignatures;
+    mEphemeralKeyPair = ephemeralKeyPair;
+  }
+
+  public X25519PublicKeyParameters getEphemeralPubKey() {
+    return (X25519PublicKeyParameters) mEphemeralKeyPair.getPublic();
+  }
+
+  // publicKeys are the keys to be signed
+  // macKey is the key used for the MAC
+  private CBORObject buildMacedKeysToSign() throws CborException, CryptoException {
+    MAC0Message msg = new MAC0Message();
+    try {
+      msg.addAttribute(
+          HeaderKeys.Algorithm, AlgorithmID.HMAC_SHA_256.AsCBOR(), Attribute.PROTECTED);
+    } catch (CoseException e) {
+      throw new CborException(
+          "Malformed input - this should not happen", e, CborException.SERIALIZATION_ERROR);
+    }
+    msg.SetContent(mPublicKeys.EncodeToBytes());
+    try {
+      msg.Create(mMacKey.ToObject(byte[].class));
+    } catch (CoseException e) {
+      throw new CryptoException(
+          "Failed to MAC the MACed keys to sign", e, CryptoException.MACING_FAILURE);
+    }
+    try {
+      return msg.EncodeToCBORObject();
+    } catch (CoseException e) {
+      throw new CborException(
+          "Failed to serialize MACed keys to sign", e, CborException.SERIALIZATION_ERROR);
+    }
+  }
+
+  /*
+   * Produces a CBORObject that contains the associated, authenticated data that goes along with
+   * the SignedMac entry
+   *
+   * @return CBORObject CBOR array containing the challenge and the device info
+   */
+  private CBORObject buildSignedDataAad() {
+    CBORObject arr = CBORObject.NewArray();
+    arr.Add(mDeviceInfo);
+    arr.Add(mChallenge);
+    return arr;
+  }
+
+  /*
+   * Produces a CBORObject representing the SignedMac entry, signed with the device private key
+   *
+   * @return CBORObject A CBOR array containing the fields of a COSE_Sign1 Message
+   */
+  private CBORObject buildSignedMac() throws CryptoException, CborException {
+    Sign1Message msg = new Sign1Message();
+    try {
+      msg.addAttribute(HeaderKeys.Algorithm, AlgorithmID.EDDSA.AsCBOR(), Attribute.PROTECTED);
+    } catch (CoseException e) {
+      throw new CborException(
+          "Malformed input - this should not happen", e, CborException.SERIALIZATION_ERROR);
+    }
+    msg.setExternal(buildSignedDataAad().EncodeToBytes());
+    msg.SetContent(mMacKey.EncodeToBytes());
+    try {
+      msg.sign(mDkPriv);
+    } catch (CoseException e) {
+      throw new CryptoException(
+          "Failed to sign MAC key with device private key", e, CryptoException.SIGNING_FAILURE);
+    }
+    try {
+      return msg.EncodeToCBORObject();
+    } catch (CoseException e) {
+      throw new CborException(
+          "Failed to serialize signed MAC", e, CborException.SERIALIZATION_ERROR);
+    }
+  }
+
+  private CBORObject buildProtectedData() throws CborException, CryptoException {
+    CBORObject protectedDataPayload = CBORObject.NewArray();
+    protectedDataPayload.Add(buildSignedMac());
+    protectedDataPayload.Add(mBcc);
+    protectedDataPayload.Add(mAdditionalDkSignatures);
+    CBORObject encMsg =
+        CborUtil.encodeEncryptMessage(
+            protectedDataPayload.EncodeToBytes(), mEphemeralKeyPair, mEek);
+    return encMsg;
+  }
+
+  /*
+   * Puts together the CBOR blob representing a CertificateRequest, composed of the data
+   * provided in the builder constructor class.
+   *
+   * @return byte[] the CertificateRequest as a CBOR encoded byte array
+   */
+  public byte[] buildCertificateRequest() throws CborException, CryptoException {
+    CBORObject certRequest = CBORObject.NewArray();
+    certRequest.Add(mDeviceInfo);
+    certRequest.Add(mChallenge);
+    certRequest.Add(buildProtectedData());
+    certRequest.Add(buildMacedKeysToSign());
+    return certRequest.EncodeToBytes();
+  }
+
+  /*
+   * A builder class to put together all the relevant information needed to form a
+   * CertificateRequest as defined by the CDDL
+   */
+  public static final class Builder {
     private CBORObject mDeviceInfo;
     private X25519PublicKeyParameters mEek;
     private CBORObject mPublicKeys;
     private CBORObject mMacKey;
     private CBORObject mChallenge;
     private CBORObject mBcc;
-    private CBORObject mAdditionalDkSignatures;
+    private CBORObject mAdditionalDkSignatures = CBORObject.NewMap();
     private OneKey mDkPriv;
-    private AsymmetricCipherKeyPair mEphemeralKeyPair;
-
-    public CertificateRequestSerializer(CBORObject deviceInfo,
-                                         X25519PublicKeyParameters eek,
-                                         CBORObject publicKeys,
-                                         CBORObject macKey,
-                                         CBORObject challenge,
-                                         CBORObject bcc,
-                                         OneKey dkPriv,
-                                         CBORObject additionalDkSignatures,
-                                         AsymmetricCipherKeyPair ephemeralKeyPair) {
-        mDeviceInfo = deviceInfo;
-        mEek = eek;
-        mPublicKeys = publicKeys;
-        mMacKey = macKey;
-        mChallenge = challenge;
-        mBcc = bcc;
-        mDkPriv = dkPriv;
-        mAdditionalDkSignatures = additionalDkSignatures;
-        mEphemeralKeyPair = ephemeralKeyPair;
-    }
-
-    public X25519PublicKeyParameters getEphemeralPubKey() {
-        return (X25519PublicKeyParameters) mEphemeralKeyPair.getPublic();
-    }
-
-    // publicKeys are the keys to be signed
-    // macKey is the key used for the MAC
-    private  CBORObject buildMacedKeysToSign() throws CborException, CryptoException {
-        MAC0Message msg = new MAC0Message();
-        try {
-            msg.addAttribute(
-                HeaderKeys.Algorithm, AlgorithmID.HMAC_SHA_256.AsCBOR(), Attribute.PROTECTED);
-        } catch (CoseException e) {
-            throw new CborException ("Malformed input - this should not happen",
-                                     e, CborException.SERIALIZATION_ERROR);
-        }
-        msg.SetContent(mPublicKeys.EncodeToBytes());
-        try {
-            msg.Create(mMacKey.ToObject(byte[].class));
-        } catch (CoseException e) {
-            throw new CryptoException("Failed to MAC the MACed keys to sign",
-                                      e, CryptoException.MACING_FAILURE);
-        }
-        try {
-            return msg.EncodeToCBORObject();
-        } catch (CoseException e) {
-            throw new CborException("Failed to serialize MACed keys to sign",
-                                    e, CborException.SERIALIZATION_ERROR);
-        }
-    }
 
     /*
-     * Produces a CBORObject that contains the associated, authenticated data that goes along with
-     * the SignedMac entry
-     *
-     * @return CBORObject CBOR array containing the challenge and the device info
+     * Builder constructor that takes an X25519 public key as an input parameter. This key
+     * corresponds to the private key held by the server.
      */
-    private CBORObject buildSignedDataAad() {
-        CBORObject arr = CBORObject.NewArray();
-        arr.Add(mDeviceInfo);
-        arr.Add(mChallenge);
-        return arr;
+    public Builder(X25519PublicKeyParameters eek) {
+      mEek = eek;
     }
 
-    /*
-     * Produces a CBORObject representing the SignedMac entry, signed with the device private key
-     *
-     * @return CBORObject A CBOR array containing the fields of a COSE_Sign1 Message
-     */
-    private CBORObject buildSignedMac() throws CryptoException, CborException {
-        Sign1Message msg = new Sign1Message();
+    public Builder setDeviceInfo(CBORObject deviceInfo) {
+      mDeviceInfo = deviceInfo;
+      return this;
+    }
+
+    public Builder setPublicKeys(ECPublicKey[] publicKeys) {
+      mPublicKeys = CBORObject.NewArray();
+      for (int i = 0; i < publicKeys.length; i++) {
+        OneKey key = new OneKey();
+        key.add(KeyKeys.KeyType, KeyKeys.KeyType_EC2);
+        key.add(KeyKeys.Algorithm, AlgorithmID.ECDSA_256.AsCBOR());
+        key.add(KeyKeys.EC2_Curve, KeyKeys.EC2_P256);
+        byte[] uncompressedKey = publicKeys[i].getEncoded();
+        key.add(KeyKeys.EC2_X, CBORObject.FromObject(Arrays.copyOfRange(uncompressedKey, 1, 33)));
+        key.add(KeyKeys.EC2_Y, CBORObject.FromObject(Arrays.copyOfRange(uncompressedKey, 33, 65)));
+        mPublicKeys.Add(key.AsCBOR());
+      }
+      return this;
+    }
+
+    public Builder setPublicKeys(OneKey[] publicKeys) {
+      mPublicKeys = CBORObject.NewArray();
+      for (int i = 0; i < publicKeys.length; i++) {
+        mPublicKeys.Add(publicKeys[i].AsCBOR());
+      }
+      return this;
+    }
+
+    public Builder setMacKey(byte[] macKey) {
+      mMacKey = CBORObject.FromObject(macKey);
+      return this;
+    }
+
+    public Builder setChallenge(byte[] challenge) {
+      mChallenge = CBORObject.FromObject(challenge);
+      return this;
+    }
+
+    public Builder setBcc(Sign1Message[] bcc, CBORObject rootKey) throws CborException {
+      mBcc = CBORObject.NewArray();
+      mBcc.Add(rootKey);
+      for (int i = 0; i < bcc.length; i++) {
         try {
-            msg.addAttribute(HeaderKeys.Algorithm, AlgorithmID.EDDSA.AsCBOR(), Attribute.PROTECTED);
+          mBcc.Add(bcc[i].EncodeToCBORObject());
         } catch (CoseException e) {
-            throw new CborException ("Malformed input - this should not happen",
-                                     e, CborException.SERIALIZATION_ERROR);
+          throw new CborException("BCC encoding failure", e, CborException.SERIALIZATION_ERROR);
         }
-        msg.setExternal(buildSignedDataAad().EncodeToBytes());
-        msg.SetContent(mMacKey.EncodeToBytes());
-        try {
-            msg.sign(mDkPriv);
-        } catch (CoseException e) {
-            throw new CryptoException("Failed to sign MAC key with device private key",
-                                      e, CryptoException.SIGNING_FAILURE);
-        }
-        try {
-            return msg.EncodeToCBORObject();
-        } catch (CoseException e) {
-            throw new CborException("Failed to serialize signed MAC",
-                                    e, CborException.SERIALIZATION_ERROR);
-        }
+      }
+      return this;
     }
 
-    private CBORObject buildProtectedData() throws CborException, CryptoException {
-        CBORObject protectedDataPayload = CBORObject.NewArray();
-        protectedDataPayload.Add(buildSignedMac());
-        protectedDataPayload.Add(mBcc);
-        protectedDataPayload.Add(mAdditionalDkSignatures);
-        CBORObject encMsg =
-            CborUtil.encodeEncryptMessage(
-                protectedDataPayload.EncodeToBytes(), mEphemeralKeyPair, mEek);
-        return encMsg;
+    public Builder addAdditionalDkSignature(String signerId, Sign1Message[] dkSignature)
+        throws CborException {
+      CBORObject certs = CBORObject.NewArray();
+      try {
+        for (int i = 0; i < dkSignature.length; i++) {
+          certs.Add(dkSignature[i].EncodeToCBORObject());
+        }
+        mAdditionalDkSignatures.Add(CBORObject.FromObject(signerId), certs);
+      } catch (CoseException e) {
+        throw new CborException(
+            "Additional device key signature encoding failure",
+            e,
+            CborException.SERIALIZATION_ERROR);
+      }
+      return this;
     }
 
-    /*
-     * Puts together the CBOR blob representing a CertificateRequest, composed of the data
-     * provided in the builder constructor class.
-     *
-     * @return byte[] the CertificateRequest as a CBOR encoded byte array
-     */
-    public byte[] buildCertificateRequest() throws CborException, CryptoException {
-        CBORObject certRequest = CBORObject.NewArray();
-        certRequest.Add(mDeviceInfo);
-        certRequest.Add(mChallenge);
-        certRequest.Add(buildProtectedData());
-        certRequest.Add(buildMacedKeysToSign());
-        return certRequest.EncodeToBytes();
+    public Builder setDkPriv(OneKey dkPriv) {
+      mDkPriv = dkPriv;
+      return this;
     }
 
-    /*
-     * A builder class to put together all the relevant information needed to form a
-     * CertificateRequest as defined by the CDDL
-     */
-    public final static class Builder {
-        private CBORObject mDeviceInfo;
-        private X25519PublicKeyParameters mEek;
-        private CBORObject mPublicKeys;
-        private CBORObject mMacKey;
-        private CBORObject mChallenge;
-        private CBORObject mBcc;
-        private CBORObject mAdditionalDkSignatures = CBORObject.NewMap();
-        private OneKey mDkPriv;
-
-        /*
-         * Builder constructor that takes an X25519 public key as an input parameter. This key
-         * corresponds to the private key held by the server.
-         */
-        public Builder(X25519PublicKeyParameters eek) {
-            mEek = eek;
-        }
-
-        public Builder setDeviceInfo(CBORObject deviceInfo) {
-            mDeviceInfo = deviceInfo;
-            return this;
-        }
-
-        public Builder setPublicKeys(ECPublicKey[] publicKeys) {
-            mPublicKeys = CBORObject.NewArray();
-            for (int i = 0; i < publicKeys.length; i++) {
-                OneKey key = new OneKey();
-                key.add(KeyKeys.KeyType, KeyKeys.KeyType_EC2);
-                key.add(KeyKeys.Algorithm, AlgorithmID.ECDSA_256.AsCBOR());
-                key.add(KeyKeys.EC2_Curve, KeyKeys.EC2_P256);
-                byte[] uncompressedKey = publicKeys[i].getEncoded();
-                key.add(KeyKeys.EC2_X, CBORObject.FromObject(Arrays.copyOfRange(uncompressedKey, 1, 33)));
-                key.add(KeyKeys.EC2_Y, CBORObject.FromObject(Arrays.copyOfRange(uncompressedKey, 33, 65)));
-                mPublicKeys.Add(key.AsCBOR());
-            }
-            return this;
-        }
-
-        public Builder setPublicKeys(OneKey[] publicKeys) {
-            mPublicKeys = CBORObject.NewArray();
-            for (int i = 0; i < publicKeys.length; i++) {
-                mPublicKeys.Add(publicKeys[i].AsCBOR());
-            }
-            return this;
-        }
-
-        public Builder setMacKey(byte[] macKey) {
-            mMacKey = CBORObject.FromObject(macKey);
-            return this;
-        }
-
-        public Builder setChallenge(byte[] challenge) {
-            mChallenge = CBORObject.FromObject(challenge);
-            return this;
-        }
-
-        public Builder setBcc(Sign1Message[] bcc, CBORObject rootKey) throws CborException {
-            mBcc = CBORObject.NewArray();
-            mBcc.Add(rootKey);
-            for (int i = 0; i < bcc.length; i++) {
-                try {
-                    mBcc.Add(bcc[i].EncodeToCBORObject());
-                } catch (CoseException e) {
-                    throw new CborException("BCC encoding failure",
-                                            e, CborException.SERIALIZATION_ERROR);
-                }
-            }
-            return this;
-        }
-
-        public Builder addAdditionalDkSignature(String signerId, Sign1Message[] dkSignature)
-                throws CborException {
-            CBORObject certs = CBORObject.NewArray();
-            try {
-                for (int i = 0; i < dkSignature.length; i++) {
-                    certs.Add(dkSignature[i].EncodeToCBORObject());
-                }
-                mAdditionalDkSignatures.Add(CBORObject.FromObject(signerId), certs);
-            } catch (CoseException e) {
-                throw new CborException("Additional device key signature encoding failure",
-                                        e, CborException.SERIALIZATION_ERROR);
-            }
-            return this;
-        }
-
-        public Builder setDkPriv(OneKey dkPriv) {
-            mDkPriv = dkPriv;
-            return this;
-        }
-
-        public CertificateRequestSerializer build() throws CryptoException {
-            return new CertificateRequestSerializer(
-                            mDeviceInfo,
-                            mEek,
-                            mPublicKeys,
-                            mMacKey,
-                            mChallenge,
-                            mBcc,
-                            mDkPriv,
-                            mAdditionalDkSignatures,
-                            CryptoUtil.genX25519());
-        }
+    public CertificateRequestSerializer build() throws CryptoException {
+      return new CertificateRequestSerializer(
+          mDeviceInfo,
+          mEek,
+          mPublicKeys,
+          mMacKey,
+          mChallenge,
+          mBcc,
+          mDkPriv,
+          mAdditionalDkSignatures,
+          CryptoUtil.genX25519());
     }
+  }
 }

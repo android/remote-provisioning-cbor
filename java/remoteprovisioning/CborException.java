@@ -16,7 +16,6 @@
 
 package remoteprovisioning;
 
-import java.lang.Enum;
 
 /*
  * This exception, when thrown, is indicative that the underlying Keymint or Keystore
@@ -24,48 +23,48 @@ import java.lang.Enum;
  */
 public class CborException extends Exception {
 
-    public static final int TYPE_MISMATCH = 1;
-    public static final int INVALID_CBOR = 2;
-    public static final int SERIALIZATION_ERROR = 3;
-    public static final int INCORRECT_LENGTH = 4;
-    public static final int DESERIALIZATION_ERROR = 5;
-    public static final int INCORRECT_COSE_TYPE = 6;
+  public static final int TYPE_MISMATCH = 1;
+  public static final int INVALID_CBOR = 2;
+  public static final int SERIALIZATION_ERROR = 3;
+  public static final int INCORRECT_LENGTH = 4;
+  public static final int DESERIALIZATION_ERROR = 5;
+  public static final int INCORRECT_COSE_TYPE = 6;
 
-    private int mErrorCode;
+  private int mErrorCode;
 
-    public CborException(String message) {
-        super(message);
-    }
+  public CborException(String message) {
+    super(message);
+  }
 
-    public CborException(String message, int errorCode) {
-        super(message);
-        mErrorCode = errorCode;
-    }
+  public CborException(String message, int errorCode) {
+    super(message);
+    mErrorCode = errorCode;
+  }
 
-    /*
-     * This constructor is intended to be a message format helper for when CBOR arrays have
-     * unexpected sizes.
-     */
-    public CborException(String message, int expectedLength, int actualLength, int errorCode) {
-        this(message + "\nExpected: " + expectedLength + "\nActual" + actualLength,
-             errorCode);
-    }
+  /*
+   * This constructor is intended to be a message format helper for when CBOR arrays have
+   * unexpected sizes.
+   */
+  public CborException(String message, int expectedLength, int actualLength, int errorCode) {
+    this(message + "\nExpected: " + expectedLength + "\nActual" + actualLength, errorCode);
+  }
 
-    /*
-     * This constructor is intended to be a message format helper for when CBOR objects have
-     * unexpected CBOR types.
-     */
-    public CborException(String message, Enum expectedType, Enum actualType, int errorCode) {
-        this(message + "\nExpected: " + expectedType.toString()
-             + "\nActual: " + actualType.toString(), errorCode);
-    }
+  /*
+   * This constructor is intended to be a message format helper for when CBOR objects have
+   * unexpected CBOR types.
+   */
+  public CborException(String message, Enum expectedType, Enum actualType, int errorCode) {
+    this(
+        message + "\nExpected: " + expectedType.toString() + "\nActual: " + actualType.toString(),
+        errorCode);
+  }
 
-    public CborException(String message, Throwable cause, int errorCode) {
-        super(message, cause);
-        mErrorCode = errorCode;
-    }
+  public CborException(String message, Throwable cause, int errorCode) {
+    super(message, cause);
+    mErrorCode = errorCode;
+  }
 
-    public int getErrorCode() {
-        return mErrorCode;
-    }
+  public int getErrorCode() {
+    return mErrorCode;
+  }
 }

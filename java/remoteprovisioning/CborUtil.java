@@ -63,12 +63,12 @@ public class CborUtil {
         CBORObject encMsg = CBORObject.NewArray();
         CBORObject protectedHeaders = CBORObject.NewMap();
         protectedHeaders.Add(HeaderKeys.Algorithm.AsCBOR(), AlgorithmID.AES_GCM_256.AsCBOR());
+        byte[] aad = buildEncStructure(protectedHeaders.EncodeToBytes(), null);
 
         CBORObject unprotectedHeaders = CBORObject.NewMap();
         unprotectedHeaders.Add(HeaderKeys.IV.AsCBOR(), CBORObject.FromObject(iv));
 
-        CBORObject content = CBORObject.FromObject(
-            CryptoUtil.encrypt(plaintext, protectedHeaders.EncodeToBytes(), sendKey, iv));
+        CBORObject content = CBORObject.FromObject(CryptoUtil.encrypt(plaintext, aad, sendKey, iv));
 
         CBORObject recipients = CBORObject.NewArray();
         // Build a COSE_Recipient object containing the public keys needed for ECDH
@@ -176,8 +176,10 @@ public class CborUtil {
                                     encMsg.size(),
                                     CborException.INCORRECT_LENGTH);
         }
-        byte[] aad = encMsg.get(COSE_ENCRYPT_PROTECTED_HEADERS_INDEX).GetByteString();
-        CBORObject protectedHeaders = CBORObject.DecodeFromBytes(aad);
+        byte[] serializedProtectedHeaders =
+                encMsg.get(COSE_ENCRYPT_PROTECTED_HEADERS_INDEX).GetByteString();
+        byte[] aad = buildEncStructure(serializedProtectedHeaders, null /* externalAad */);
+        CBORObject protectedHeaders = CBORObject.DecodeFromBytes(serializedProtectedHeaders);
         CBORObject unprotectedHeaders = encMsg.get(COSE_ENCRYPT_UNPROTECTED_HEADERS_INDEX);
         byte[] content = encMsg.get(COSE_ENCRYPT_CIPHERTEXT_INDEX).GetByteString();
         CBORObject recipient = getRecipient(encMsg.get(COSE_ENCRYPT_RECIPIENTS_INDEX));
@@ -194,6 +196,31 @@ public class CborUtil {
                 eek, CryptoUtil.byteArrayToX25519PublicKey(ephemeralPublicKey));
         byte[] iv = unprotectedHeaders.get(HeaderKeys.IV.AsCBOR()).GetByteString();
         return CBORObject.DecodeFromBytes(CryptoUtil.decrypt(content, aad, derivedKey, iv));
+    }
+
+    /*
+     * Builds the COSE Enc_structure which becomes the AAD for encryption/decryption operations.
+     * In this case, the context indicates this is for a COSE_Encrypt message only, but it could
+     * be trivially modified to accept an enum for context selection in the future if the need
+     * arises.
+     *
+     * Enc_structure = [
+     *     context : "Encrypt" / "Encrypt0" / "Enc_Recipient" /
+     *         "Mac_Recipient" / "Rec_Recipient",
+     *     protected : empty_or_serialized_map,
+     *     external_aad : bstr
+     * ]
+     */
+    private static byte[] buildEncStructure(byte[] emptyOrSerializedMap, byte[] externalAad) {
+        CBORObject encStructure = CBORObject.NewArray();
+        encStructure.Add("Encrypt");
+        encStructure.Add(emptyOrSerializedMap);
+        // Absent external_aad should be represented as a bstr of length 0, not nil.
+        if (externalAad == null) {
+            externalAad = new byte[0];
+        }
+        encStructure.Add(externalAad);
+        return encStructure.EncodeToBytes();
     }
 
     public static CBORObject buildParty(String identity, byte[] pubKey) {

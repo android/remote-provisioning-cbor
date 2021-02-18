@@ -16,7 +16,13 @@
 
 package remoteprovisioning;
 
+import remoteprovisioning.CborException;
+
+import com.upokecenter.cbor.CBORObject;
+import com.upokecenter.cbor.CBORType;
+
 import java.lang.StringBuilder;
+import java.util.Optional;
 
 public class DeviceInfo {
     private String mBrand;
@@ -24,63 +30,62 @@ public class DeviceInfo {
     private String mProduct;
     private String mModel;
     private String mBoard;
+    private String mVbState;
+    private String mBootloaderState;
+    private String mVbmetaDigest;
+    private String mOsVersion;
 
-    public DeviceInfo() { }
+    private int mSystemPatchLevel;
+    private int mBootPatchLevel;
+    private int mVendorPatchLevel;
 
-    public DeviceInfo(DeviceInfo other) {
-        this(other.getBrand(),
-             other.getManufacturer(),
-             other.getProduct(),
-             other.getModel(),
-             other.getBoard());
+    public DeviceInfo(CBORObject map) throws CborException {
+        parseDeviceInfo(map);
     }
 
-    public DeviceInfo(String brand,
-                      String manufacturer,
-                      String product,
-                      String model,
-                      String board) {
-        mBrand = brand;
-        mManufacturer = manufacturer;
-        mProduct = product;
-        mModel = model;
-        mBoard = board;
-    }
-
-    @Override
-    public boolean equals(Object other) {
-        if (other == null) {
-            return false;
+    private void parseDeviceInfo(CBORObject deviceInfo) throws CborException {
+        if (deviceInfo.getType() != CBORType.Map) {
+            throw new CborException("DeviceInfo type wrong",
+                                    CBORType.Map,
+                                    deviceInfo.getType(),
+                                    CborException.TYPE_MISMATCH);
         }
-        if (!(other instanceof DeviceInfo)) {
-            return false;
-        }
-        DeviceInfo o = (DeviceInfo)other;
-        return mBrand.equals(o.getBrand())
-               && mManufacturer.equals(o.getManufacturer())
-               && mProduct.equals(o.getProduct())
-               && mModel.equals(o.getModel())
-               && mBoard.equals(o.getBoard());
-    }
-
-    public void setBrand(String brand) {
-        mBrand = brand;
-    }
-
-    public void setManufacturer(String manufacturer) {
-        mManufacturer = manufacturer;
-    }
-
-    public void setProduct(String product) {
-        mProduct = product;
-    }
-
-    public void setModel(String model) {
-        mModel = model;
-    }
-
-    public void setBoard(String board) {
-        mBoard = board;
+        mBrand = Optional.ofNullable(deviceInfo.get("brand"))
+                         .map(x -> x.AsString())
+                         .orElse("");
+        mManufacturer = Optional.ofNullable(deviceInfo.get("manufacturer"))
+                                .map(x -> x.AsString())
+                                .orElse("");
+        mProduct = Optional.ofNullable(deviceInfo.get("product"))
+                           .map(x -> x.AsString())
+                           .orElse("");
+        mModel = Optional.ofNullable(deviceInfo.get("model"))
+                                .map(x -> x.AsString())
+                                .orElse("");
+        mBoard = Optional.ofNullable(deviceInfo.get("board"))
+                                .map(x -> x.AsString())
+                                .orElse("");
+        mVbState = Optional.ofNullable(deviceInfo.get("vb_state"))
+                                .map(x -> x.AsString())
+                                .orElse("");
+        mBootloaderState = Optional.ofNullable(deviceInfo.get("bootloader_state"))
+                                .map(x -> x.AsString())
+                                .orElse("");
+        mVbmetaDigest = Optional.ofNullable(deviceInfo.get("vbmeta_digest"))
+                                .map(x -> x.AsString())
+                                .orElse("");
+        mOsVersion = Optional.ofNullable(deviceInfo.get("os_version"))
+                                .map(x -> x.AsString())
+                                .orElse("");
+        mSystemPatchLevel = Optional.ofNullable(deviceInfo.get("system_patch_level"))
+                                .map(x -> x.AsInt32())
+                                .orElse(-1);
+        mBootPatchLevel = Optional.ofNullable(deviceInfo.get("boot_patch_level"))
+                                .map(x -> x.AsInt32())
+                                .orElse(-1);
+        mVendorPatchLevel = Optional.ofNullable(deviceInfo.get("vendor_patch_level"))
+                                .map(x -> x.AsInt32())
+                                .orElse(-1);
     }
 
     public String getBrand() {
@@ -103,14 +108,32 @@ public class DeviceInfo {
         return mBoard;
     }
 
-    @Override
-    public int hashCode() {
-        int result = mBrand != null ? mBrand.hashCode() : 0;
-        result = 31 * result + (mManufacturer != null ? mManufacturer.hashCode() : 0);
-        result = 31 * result + (mProduct != null ? mProduct.hashCode() : 0);
-        result = 31 * result + (mModel != null ? mModel.hashCode() : 0);
-        result = 31 * result + (mBoard != null ? mBoard.hashCode() : 0);
-        return result;
+    public String getVbState() {
+        return mVbState;
+    }
+
+    public String getBootloaderState() {
+        return mBootloaderState;
+    }
+
+    public String getVbmetaDigest() {
+        return mVbmetaDigest;
+    }
+
+    public String getOsVersion() {
+        return mOsVersion;
+    }
+
+    public int getSystemPatchLevel() {
+        return mSystemPatchLevel;
+    }
+
+    public int getBootPatchLevel() {
+        return mBootPatchLevel;
+    }
+
+    public int getVendorPatchLevel() {
+        return mVendorPatchLevel;
     }
 
     @Override
@@ -122,6 +145,13 @@ public class DeviceInfo {
         str.append("\tProduct: " + this.getProduct());
         str.append("\tModel: " + this.getModel());
         str.append("\tBoard: " + this.getBoard());
+        str.append("\tVerified Boot State: " + this.getVbState());
+        str.append("\tBootloader State: " + this.getBootloaderState());
+        str.append("\tVBMeta Digest: " + this.getVbmetaDigest());
+        str.append("\tOS Version: " + this.getOsVersion());
+        str.append("\tSystem Patch Level: " + this.getSystemPatchLevel());
+        str.append("\tBoot Patch Level: " + this.getBootPatchLevel());
+        str.append("\tVendor Patch Level: " + this.getVendorPatchLevel());
         return str.toString();
     }
 }

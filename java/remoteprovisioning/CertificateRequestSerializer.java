@@ -19,7 +19,6 @@ package remoteprovisioning;
 import remoteprovisioning.CborException;
 import remoteprovisioning.CryptoException;
 import remoteprovisioning.CryptoUtil;
-import remoteprovisioning.DeviceInfo;
 
 import com.upokecenter.cbor.CBORObject;
 import org.bouncycastle.crypto.AsymmetricCipherKeyPair;
@@ -35,6 +34,8 @@ import COSE.OneKey;
 import COSE.Sign1Message;
 
 import java.security.*;
+import java.security.interfaces.ECPublicKey;
+import java.util.Arrays;
 
 /*
  * The main purpose of this class is to help test the CertificateRequestDeserializer. A server or
@@ -196,24 +197,21 @@ public class CertificateRequestSerializer {
             mEek = eek;
         }
 
-        public Builder setDeviceInfo(DeviceInfo deviceInfo) {
-            mDeviceInfo = CBORObject.NewArray();
-            mDeviceInfo.Add(deviceInfo.getBrand());
-            mDeviceInfo.Add(deviceInfo.getManufacturer());
-            mDeviceInfo.Add(deviceInfo.getProduct());
-            mDeviceInfo.Add(deviceInfo.getModel());
-            mDeviceInfo.Add(deviceInfo.getBoard());
+        public Builder setDeviceInfo(CBORObject deviceInfo) {
+            mDeviceInfo = deviceInfo;
             return this;
         }
 
-        public Builder setPublicKeys(byte[][] publicKeys) {
+        public Builder setPublicKeys(ECPublicKey[] publicKeys) {
             mPublicKeys = CBORObject.NewArray();
             for (int i = 0; i < publicKeys.length; i++) {
                 OneKey key = new OneKey();
-                key.add(KeyKeys.KeyType, KeyKeys.KeyType_OKP);
-                key.add(KeyKeys.Algorithm, CBORObject.FromObject(-8));                   //EdDSA
-                key.add(KeyKeys.OKP_Curve, KeyKeys.OKP_Ed25519);
-                key.add(KeyKeys.OKP_X, CBORObject.FromObject(publicKeys[i]));
+                key.add(KeyKeys.KeyType, KeyKeys.KeyType_EC2);
+                key.add(KeyKeys.Algorithm, AlgorithmID.ECDSA_256.AsCBOR());
+                key.add(KeyKeys.EC2_Curve, KeyKeys.EC2_P256);
+                byte[] uncompressedKey = publicKeys[i].getEncoded();
+                key.add(KeyKeys.EC2_X, CBORObject.FromObject(Arrays.copyOfRange(uncompressedKey, 1, 33)));
+                key.add(KeyKeys.EC2_Y, CBORObject.FromObject(Arrays.copyOfRange(uncompressedKey, 33, 65)));
                 mPublicKeys.Add(key.AsCBOR());
             }
             return this;
@@ -237,28 +235,27 @@ public class CertificateRequestSerializer {
             return this;
         }
 
-        public Builder setBcc(Sign1Message[] bcc, int deviceKeyEntry) throws CborException {
+        public Builder setBcc(Sign1Message[] bcc, CBORObject rootKey) throws CborException {
             mBcc = CBORObject.NewArray();
-            mBcc.Add(deviceKeyEntry);
-            CBORObject certChain = CBORObject.NewArray();
+            mBcc.Add(rootKey);
             for (int i = 0; i < bcc.length; i++) {
                 try {
-                    certChain.Add(bcc[i].EncodeToCBORObject());
+                    mBcc.Add(bcc[i].EncodeToCBORObject());
                 } catch (CoseException e) {
                     throw new CborException("BCC encoding failure",
                                             e, CborException.SERIALIZATION_ERROR);
                 }
             }
-            mBcc.Add(certChain);
             return this;
         }
 
-        public Builder addAdditionalDkSignature(int signerId, Sign1Message[] dkSignature)
+        public Builder addAdditionalDkSignature(String signerId, Sign1Message[] dkSignature)
                 throws CborException {
             CBORObject certs = CBORObject.NewArray();
             try {
-                certs.Add(dkSignature[0].EncodeToCBORObject());
-                certs.Add(dkSignature[1].EncodeToCBORObject());
+                for (int i = 0; i < dkSignature.length; i++) {
+                    certs.Add(dkSignature[i].EncodeToCBORObject());
+                }
                 mAdditionalDkSignatures.Add(CBORObject.FromObject(signerId), certs);
             } catch (CoseException e) {
                 throw new CborException("Additional device key signature encoding failure",

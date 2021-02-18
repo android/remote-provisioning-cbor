@@ -79,12 +79,11 @@ public class CertificateRequestDeserializer {
     private static final int CERTIFICATE_REQUEST_PROTECTED_DATA_INDEX = 2;
     private static final int CERTIFICATE_REQUEST_MACED_KEYS_INDEX = 3;
 
-    private static final int DEVICE_INFO_NUM_ENTRIES = 5;
-    private static final int DEVICE_INFO_BRAND_INDEX = 0;
-    private static final int DEVICE_INFO_MANUFACTURER_INDEX = 1;
-    private static final int DEVICE_INFO_PRODUCT_INDEX = 2;
-    private static final int DEVICE_INFO_MODEL_INDEX = 3;
-    private static final int DEVICE_INFO_BOARD_INDEX = 4;
+    private static final String DEVICE_INFO_BRAND_KEY = "brand";
+    private static final String DEVICE_INFO_MANUFACTURER_KEY = "manufacturer";
+    private static final String DEVICE_INFO_PRODUCT_KEY = "product";
+    private static final String DEVICE_INFO_MODEL_KEY = "model";
+    private static final String DEVICE_INFO_BOARD_KEY = "board";
 
     private CBORObject mDeviceInfo;
     private byte[] mChallenge;
@@ -134,24 +133,13 @@ public class CertificateRequestDeserializer {
      *          info field
      */
     private static DeviceInfo parseDeviceInfo(CBORObject cborDeviceInfo) throws CborException {
-        if (cborDeviceInfo.getType() != CBORType.Array) {
+        if (cborDeviceInfo.getType() != CBORType.Map) {
             throw new CborException("DeviceInfo Type Wrong",
-                                    CBORType.Array,
+                                    CBORType.Map,
                                     cborDeviceInfo.getType(),
                                     CborException.TYPE_MISMATCH);
         }
-        if (cborDeviceInfo.size() != DEVICE_INFO_NUM_ENTRIES) {
-            throw new CborException("DeviceInfo incorrect length",
-                                    DEVICE_INFO_NUM_ENTRIES,
-                                    cborDeviceInfo.size(),
-                                    CborException.INCORRECT_LENGTH);
-        }
-        return new DeviceInfo(
-            cborDeviceInfo.get(DEVICE_INFO_BRAND_INDEX).ToObject(String.class),
-            cborDeviceInfo.get(DEVICE_INFO_MANUFACTURER_INDEX).ToObject(String.class),
-            cborDeviceInfo.get(DEVICE_INFO_PRODUCT_INDEX).ToObject(String.class),
-            cborDeviceInfo.get(DEVICE_INFO_MODEL_INDEX).ToObject(String.class),
-            cborDeviceInfo.get(DEVICE_INFO_BOARD_INDEX).ToObject(String.class));
+        return new DeviceInfo(cborDeviceInfo);
     }
 
     /*
@@ -223,9 +211,9 @@ public class CertificateRequestDeserializer {
      *
      * @return ArrayList byte arrays where each byte array is a public key to be signed
      */
-    public static ArrayList<byte[]> retrievePublicKeys(byte[] serializedMacedKeysToSign,
-                                                       byte[] macKey)
-                                                       throws CborException, CryptoException {
+    public static ArrayList<PublicKey> retrievePublicKeys(byte[] serializedMacedKeysToSign,
+                                                          byte[] macKey)
+                                                          throws CborException, CryptoException {
         MAC0Message macedKeysToSign = new MAC0Message();
         try {
             macedKeysToSign.DecodeFromCBORObject(
@@ -239,12 +227,18 @@ public class CertificateRequestDeserializer {
                                     e, CborException.DESERIALIZATION_ERROR);
         }
 
-        ArrayList<byte[]> deserializedPublicKeys = new ArrayList<byte[]>();
+        ArrayList<PublicKey> deserializedPublicKeys = new ArrayList<PublicKey>();
         CBORObject serializedPublicKeys = CBORObject.DecodeFromBytes(macedKeysToSign.GetContent());
+        if (serializedPublicKeys.getType() != CBORType.Array) {
+            throw new CborException("KeysToCertify Type Wrong",
+                                    CBORType.Array,
+                                    serializedPublicKeys.getType(),
+                                    CborException.TYPE_MISMATCH);
+        }
         for (int i = 0; i < serializedPublicKeys.size(); i++) {
             try {
                 OneKey key = new OneKey(serializedPublicKeys.get(i));
-                deserializedPublicKeys.add(CryptoUtil.byteArrayToEd25519PublicKey(key.get(KeyKeys.OKP_X).ToObject(byte[].class)).getEncoded());
+                deserializedPublicKeys.add(CryptoUtil.oneKeyToP256PublicKey(key));
             } catch (CoseException e) {
                 throw new CborException("Failure to deserialize public keys",
                                         e, CborException.DESERIALIZATION_ERROR);

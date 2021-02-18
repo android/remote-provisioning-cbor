@@ -16,6 +16,9 @@
 
 package remoteprovisioning;
 
+import static org.junit.Assert.*;
+
+import com.upokecenter.cbor.CBORObject;
 import junit.framework.TestCase;
 import net.i2p.crypto.eddsa.EdDSASecurityProvider;
 import org.bouncycastle.crypto.AsymmetricCipherKeyPair;
@@ -24,7 +27,6 @@ import org.junit.*;
 import org.junit.Test;
 import org.junit.runner.*;
 import org.junit.runners.*;
-import static org.junit.Assert.*;
 
 import COSE.AlgorithmID;
 import COSE.Attribute;
@@ -49,7 +51,8 @@ public class CertificateRequestDeserializerTest {
     private byte[] challenge = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
                                 14, 15, 16};
     private byte[] certificateRequestSerialized;
-    private DeviceInfo deviceInfo = new DeviceInfo("a", "b", "c", "d", "e");
+    
+    private CBORObject deviceInfo;
 
     private OneKey deviceKeyPair;
     private OneKey[] keysToSign;
@@ -67,9 +70,16 @@ public class CertificateRequestDeserializerTest {
 
     @Before
     public void setUp() throws Exception {
+        deviceInfo = CBORObject.NewMap();
+        deviceInfo.Add("board", "devboard");
+        deviceInfo.Add("manufacturer", "devmanufacturer");
+
         deviceKeyPair = OneKey.generateKey(KeyKeys.OKP_Ed25519);
         deviceKeyPair.add(KeyKeys.Algorithm, AlgorithmID.EDDSA.AsCBOR());
-        keysToSign = new OneKey[] { OneKey.generateKey(KeyKeys.OKP_Ed25519).PublicKey() };
+
+        OneKey keyToSign = OneKey.generateKey(KeyKeys.EC2_P256).PublicKey();
+        keyToSign.add(KeyKeys.Algorithm, AlgorithmID.ECDSA_256.AsCBOR());
+        keysToSign = new OneKey[] { keyToSign };
         
         // Generate a BCC and self sign
         Sign1Message bccCert = new Sign1Message();
@@ -105,9 +115,9 @@ public class CertificateRequestDeserializerTest {
                                 .setPublicKeys(keysToSign)
                                 .setMacKey(mac)
                                 .setChallenge(challenge)
-                                .setBcc(bcc, 0 /* deviceKeyEntry */)
+                                .setBcc(bcc, deviceKeyPair.PublicKey().AsCBOR())
                                 .setDkPriv(deviceKeyPair)
-                                .addAdditionalDkSignature(0 /* signerId */,
+                                .addAdditionalDkSignature("fake" /* signerId */,
                                                           additionalDkSignatureChain)
                                 .build()
                                 .buildCertificateRequest();
@@ -133,18 +143,14 @@ public class CertificateRequestDeserializerTest {
             deviceKeyPair.PublicKey().get(KeyKeys.OKP_X).ToObject(byte[].class)));
         assertTrue(Arrays.equals(payload.getMacKey(), mac));
 
-        ArrayList<byte[]> publicKeys =
+        ArrayList<PublicKey> publicKeys =
             CertificateRequestDeserializer.retrievePublicKeys(certRequest.getMacedKeysToSign(),
                                                               payload.getMacKey());
         assertNotNull(publicKeys);
         assertEquals(1, publicKeys.size());
         assertTrue(
-            Arrays.equals(publicKeys.get(0),
-                          CryptoUtil.byteArrayToEd25519PublicKey(
-                              keysToSign[0]
-                                  .get(KeyKeys.OKP_X)
-                                  .ToObject(byte[].class))
-                          .getEncoded()));
+            Arrays.equals(publicKeys.get(0).getEncoded(),
+                          CryptoUtil.oneKeyToP256PublicKey(keysToSign[0]).getEncoded()));
     }
 
     @Test
@@ -204,7 +210,6 @@ public class CertificateRequestDeserializerTest {
                 new ProtectedDataPayload(
                     certRequest.getProtectedData(),
                     certRequest.getChallenge(),
-                    // equivalent to an encoded: new DeviceInfo('a','b','c','d','f');
                     new byte[] {-123, 97, 97, 97, 98, 97, 99, 97, 100, 97, 102},
                     serverKeyPair);
         } catch (CryptoException e) {
@@ -223,7 +228,7 @@ public class CertificateRequestDeserializerTest {
                             .setPublicKeys(keysToSign)
                             .setMacKey(mac)
                             .setChallenge(challenge)
-                            .setBcc(bcc, 0 /* deviceKeyEntry */)
+                            .setBcc(bcc, deviceKeyPair.PublicKey().AsCBOR())
                             .setDkPriv(deviceKeyPair)
                             .build()
                             .buildCertificateRequest();
@@ -259,9 +264,9 @@ public class CertificateRequestDeserializerTest {
                             .setPublicKeys(keysToSign)
                             .setMacKey(mac)
                             .setChallenge(challenge)
-                            .setBcc(bcc, 0 /* deviceKeyEntry */)
+                            .setBcc(bcc, deviceKeyPair.PublicKey().AsCBOR())
                             .setDkPriv(deviceKeyPair)
-                            .addAdditionalDkSignature(0 /* signerId */, additionalDkSignatureChain)
+                            .addAdditionalDkSignature("fake" /* signerId */, additionalDkSignatureChain)
                             .build()
                             .buildCertificateRequest();
         certRequest = new CertificateRequestDeserializer(certificateRequestSerialized);
@@ -301,9 +306,9 @@ public class CertificateRequestDeserializerTest {
                             .setPublicKeys(keysToSign)
                             .setMacKey(mac)
                             .setChallenge(challenge)
-                            .setBcc(bcc, 0 /* deviceKeyEntry */)
+                            .setBcc(bcc, deviceKeyPair.PublicKey().AsCBOR())
                             .setDkPriv(deviceKeyPair)
-                            .addAdditionalDkSignature(0 /* signerId */, additionalDkSignatureChain)
+                            .addAdditionalDkSignature("fake" /* signerId */, additionalDkSignatureChain)
                             .build()
                             .buildCertificateRequest();
         certRequest = new CertificateRequestDeserializer(certificateRequestSerialized);
@@ -343,9 +348,9 @@ public class CertificateRequestDeserializerTest {
                             .setPublicKeys(keysToSign)
                             .setMacKey(mac)
                             .setChallenge(challenge)
-                            .setBcc(bcc, 0 /* deviceKeyEntry */)
+                            .setBcc(bcc, deviceKeyPair.PublicKey().AsCBOR())
                             .setDkPriv(deviceKeyPair)
-                            .addAdditionalDkSignature(0 /* signerId */, additionalDkSignatureChain)
+                            .addAdditionalDkSignature("fake" /* signerId */, additionalDkSignatureChain)
                             .build()
                             .buildCertificateRequest();
         certRequest = new CertificateRequestDeserializer(certificateRequestSerialized);

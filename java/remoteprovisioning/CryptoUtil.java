@@ -44,7 +44,7 @@ import COSE.Sign1Message;
 import java.util.Arrays;
 import java.math.BigInteger;
 import java.security.*;
-import java.security.spec.InvalidKeySpecException;
+import java.security.spec.*;
 import javax.crypto.Cipher;
 import javax.crypto.KeyAgreement;
 import javax.crypto.IllegalBlockSizeException;
@@ -194,6 +194,43 @@ public class CryptoUtil {
         key.add(KeyKeys.OKP_Curve, KeyKeys.OKP_X25519);
         key.add(KeyKeys.OKP_X, CBORObject.FromObject(pubKey.getEncoded()));
         return key;
+    }
+
+    public static PublicKey oneKeyToP256PublicKey(OneKey key)
+            throws CborException, CryptoException {
+        if (!key.get(KeyKeys.KeyType).equals(KeyKeys.KeyType_EC2)) {
+            throw new CborException("Key has unexpected key type (kty)",
+                                        KeyKeys.KeyType_EC2.AsInt32(),
+                                        key.get(KeyKeys.KeyType).AsInt32(),
+                                        CborException.INCORRECT_COSE_TYPE);
+        }
+        if (!key.get(KeyKeys.Algorithm).equals(AlgorithmID.ECDSA_256.AsCBOR())) {
+            throw new CborException("Key has unexpected algorithm",
+                                        AlgorithmID.ECDSA_256.AsCBOR().AsInt32(),
+                                        key.get(KeyKeys.Algorithm).AsInt32(),
+                                        CborException.INCORRECT_COSE_TYPE);
+        }
+        if (!key.get(KeyKeys.EC2_Curve).equals(KeyKeys.EC2_P256)) {
+            throw new CborException("Key has unexpected curve",
+                                        KeyKeys.EC2_P256.AsInt32(),
+                                        key.get(KeyKeys.EC2_Curve).AsInt32(),
+                                        CborException.INCORRECT_COSE_TYPE);
+        }
+        try {
+            BigInteger x = new BigInteger(key.get(KeyKeys.EC2_X).GetByteString());
+            BigInteger y = new BigInteger(key.get(KeyKeys.EC2_Y).GetByteString());
+            AlgorithmParameters parameters = AlgorithmParameters.getInstance("EC");
+            parameters.init(new ECGenParameterSpec("secp256r1"));
+            ECParameterSpec ecParameters = parameters.getParameterSpec(ECParameterSpec.class);
+            ECPoint point = new ECPoint(x, y);
+            ECPublicKeySpec keySpec = new ECPublicKeySpec(point, ecParameters);
+            KeyFactory keyFactory = KeyFactory.getInstance("EC");
+            return keyFactory.generatePublic(keySpec);
+        } catch (NoSuchAlgorithmException
+                 | InvalidParameterSpecException
+                 | InvalidKeySpecException e) {
+            throw new CryptoException("No support for P256.", e, CryptoException.NO_SUCH_ALGORITHM);
+        }
     }
 
     /*
@@ -534,16 +571,39 @@ public class CryptoUtil {
         return new X25519PublicKeyParameters(uCoordArr, 0 /* offset */);
     }
 
-    public static boolean validateCertificateChain(CBORObject chain)
+    public static boolean validateBcc(CBORObject chain)
             throws CborException, CryptoException {
-        CBORObject last = chain.get(0);
+        try {
+            Sign1Message certToVerify = (Sign1Message) Message.DecodeFromBytes(
+                    chain.get(1).EncodeToBytes(), MessageTag.Sign1);
+            OneKey verifyingKey = new OneKey(chain.get(0));
+            if (!certToVerify.validate(verifyingKey)) {
+                return false;
+            }
+        } catch (CoseException e) {
+            throw new CryptoException("Failed to validate first BCC cert with key",
+                                      e, CryptoException.VERIFICATION_FAILURE);
+        }
+        // TODO: No implementations will have anything more than a device public key and a self
+        //       signed root cert in phase 1. Come back and finish functionality for verifying
+        //       a chain of signed CWTs and extracting the relevant info
+        /*
+        Sign1Message signedCwt =
+                (Sign1Message) Message.DecodeFromBytes(certToVerifyCbor.EncodeToBytes(),
+                                                       MessageTag.Sign1);
+        CBORObject cwtMap = CBORObject.DecodeFromBytes(signedCwt.getContent());
+        // The 0 index is the the device public key as a COSE_Key object. The 1 index marks the
+        // start of the full BccEntry's; COSE_Sign1 objects where the payload is a CBOR Web Token.
+        // That CBOR Web Token is a map, in which one of the fields contains the public key that
+        // verifies the next BccEntry in the chain.
+        CBORObject last = chain.get(1);
         // verify the certificate chain
         for (int i = 0; i < chain.size(); i++) {
-            if (!verifyCert(last, chain.get(i))) {
+            if (!verifyCertWithWebtokenPayload(last, chain.get(i))) {
                 return false;
             }
             last = chain.get(i);
-        }
+        }*/
         return true;
     }
 

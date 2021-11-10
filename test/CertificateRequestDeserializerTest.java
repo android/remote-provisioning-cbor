@@ -14,9 +14,12 @@
  * limitations under the License.
  */
 
-package remoteprovisioning;
+package remoteprovisioning.test;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import COSE.AlgorithmID;
 import COSE.Attribute;
@@ -26,50 +29,73 @@ import COSE.OneKey;
 import COSE.Sign1Message;
 import com.upokecenter.cbor.CBORObject;
 import java.security.*;
+import java.security.interfaces.ECPublicKey;
+import java.security.spec.ECGenParameterSpec;
 import java.util.ArrayList;
 import java.util.Arrays;
 import net.i2p.crypto.eddsa.EdDSASecurityProvider;
 import org.bouncycastle.crypto.AsymmetricCipherKeyPair;
 import org.bouncycastle.crypto.params.X25519PublicKeyParameters;
-import org.junit.*;
+import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.*;
-import org.junit.runners.*;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
+import remoteprovisioning.*;
 
+/**
+ * Testing class designed to cover functionality in the CertificateRequestSerializer/Deserializer
+ * code.
+ */
 @RunWith(JUnit4.class)
 public class CertificateRequestDeserializerTest {
-  private byte[] mac = {
+  private final byte[] mac = {
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
     27, 28, 29, 30, 31, 32
   };
 
-  private byte[] challenge = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+  private final byte[] challenge = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
   private byte[] certificateRequestSerialized;
+  private byte[] certificateRequestSerializedP256;
 
   private CBORObject deviceInfo;
 
   private OneKey deviceKeyPair;
+  private OneKey deviceKeyPairP256;
+
   private OneKey[] keysToSign;
+
   private Sign1Message[] bcc;
+  private Sign1Message[] bccP256;
+
+  private KeyPair serverKeyPairP256;
+
   private AsymmetricCipherKeyPair serverKeyPair;
   private OneKey oemKeyPair;
   private Sign1Message[] additionalDkSignatureChain;
 
   private CertificateRequestDeserializer certRequest;
-
-  @BeforeClass
-  public static void beforeAllTestMethods() {
-    Security.addProvider(new EdDSASecurityProvider());
-  }
+  private CertificateRequestDeserializer certRequestP256;
 
   @Before
   public void setUp() throws Exception {
-    deviceInfo = CBORObject.NewMap();
-    deviceInfo.Add("board", "devboard");
-    deviceInfo.Add("manufacturer", "devmanufacturer");
+    Security.addProvider(new EdDSASecurityProvider());
+    deviceInfo = CBORObject.NewArray();
+    CBORObject deviceInfoVerified = CBORObject.NewMap();
+    deviceInfoVerified.Add("board", "devboard");
+    deviceInfoVerified.Add("manufacturer", "devmanufacturer");
+    deviceInfoVerified.Add("version", 1);
+
+    CBORObject deviceInfoUnverified = CBORObject.NewMap();
+    deviceInfoUnverified.Add("fingerprint", "cool/new/device/thing");
+
+    deviceInfo.Add(deviceInfoVerified);
+    deviceInfo.Add(deviceInfoUnverified);
 
     deviceKeyPair = OneKey.generateKey(KeyKeys.OKP_Ed25519);
     deviceKeyPair.add(KeyKeys.Algorithm, AlgorithmID.EDDSA.AsCBOR());
+
+    deviceKeyPairP256 = OneKey.generateKey(KeyKeys.EC2_P256);
+    deviceKeyPairP256.add(KeyKeys.Algorithm, AlgorithmID.ECDSA_256.AsCBOR());
 
     OneKey keyToSign = OneKey.generateKey(KeyKeys.EC2_P256).PublicKey();
     keyToSign.add(KeyKeys.Algorithm, AlgorithmID.ECDSA_256.AsCBOR());
@@ -82,8 +108,19 @@ public class CertificateRequestDeserializerTest {
     bccCert.sign(deviceKeyPair);
     bcc = new Sign1Message[] {bccCert};
 
+    // Generate a BCC and self sign
+    Sign1Message bccCertP256 = new Sign1Message();
+    bccCertP256.addAttribute(
+        HeaderKeys.Algorithm, AlgorithmID.ECDSA_256.AsCBOR(), Attribute.PROTECTED);
+    bccCertP256.SetContent(deviceKeyPairP256.PublicKey().EncodeToBytes());
+    bccCertP256.sign(deviceKeyPairP256);
+    bccP256 = new Sign1Message[] {bccCertP256};
+
     // Generate the EEK server key pair
     serverKeyPair = CryptoUtil.genX25519();
+    KeyPairGenerator kpg = KeyPairGenerator.getInstance("EC");
+    kpg.initialize(new ECGenParameterSpec("secp256r1"));
+    serverKeyPairP256 = kpg.genKeyPair();
 
     // Generate the additional device key signing certificates.
     // OEM certificate is self signed; device certificate is signed by the OEM key pair
@@ -114,15 +151,28 @@ public class CertificateRequestDeserializerTest {
             .build()
             .buildCertificateRequest();
     certRequest = new CertificateRequestDeserializer(certificateRequestSerialized);
+
+    certificateRequestSerializedP256 =
+        new CertificateRequestSerializer.Builder((ECPublicKey) serverKeyPairP256.getPublic())
+            .setDeviceInfo(deviceInfo)
+            .setPublicKeys(keysToSign)
+            .setMacKey(mac)
+            .setChallenge(challenge)
+            .setBcc(bccP256, deviceKeyPairP256.PublicKey().AsCBOR())
+            .setDkPriv(deviceKeyPairP256)
+            .build()
+            .buildCertificateRequest();
+    certRequestP256 = new CertificateRequestDeserializer(certificateRequestSerializedP256);
   }
 
   @Test
-  public void TestSerializeDeserialize() throws Exception {
+  public void testSerializeDeserialize() throws Exception {
     ProtectedDataPayload payload =
         new ProtectedDataPayload(
             certRequest.getProtectedData(),
             certRequest.getChallenge(),
             certRequest.getDeviceInfoEncoded(),
+            certRequest.getMacedKeysMac(),
             serverKeyPair);
     assertNotNull(payload);
     assertTrue(
@@ -143,7 +193,34 @@ public class CertificateRequestDeserializerTest {
   }
 
   @Test
-  public void TestWrongMacFails() throws Exception {
+  public void testSerializeDeserializeP256() throws Exception {
+    ProtectedDataPayload payload =
+        new ProtectedDataPayload(
+            certRequestP256.getProtectedData(),
+            certRequestP256.getChallenge(),
+            certRequestP256.getDeviceInfoEncoded(),
+            certRequestP256.getMacedKeysMac(),
+            serverKeyPairP256);
+    assertNotNull(payload);
+
+    assertTrue(
+        Arrays.equals(
+            payload.getDevicePublicKey(),
+            CryptoUtil.p256PubKeyToBytes((ECPublicKey) deviceKeyPairP256.AsPublicKey())));
+    assertTrue(Arrays.equals(payload.getMacKey(), mac));
+
+    ArrayList<PublicKey> publicKeys =
+        CertificateRequestDeserializer.retrievePublicKeys(
+            certRequest.getMacedKeysToSign(), payload.getMacKey());
+    assertNotNull(publicKeys);
+    assertEquals(1, publicKeys.size());
+    assertTrue(
+        Arrays.equals(
+            publicKeys.get(0).getEncoded(),
+            CryptoUtil.oneKeyToP256PublicKey(keysToSign[0]).getEncoded()));
+  }
+  @Test
+  public void testWrongMacFails() throws Exception {
     byte[] badMac = Arrays.copyOf(mac, mac.length);
     badMac[4] = 21;
     try {
@@ -156,7 +233,7 @@ public class CertificateRequestDeserializerTest {
   }
 
   @Test
-  public void TestWrongEekFails() throws Exception {
+  public void testWrongEekFails() throws Exception {
     AsymmetricCipherKeyPair fakeKeyPair = CryptoUtil.genX25519();
     try {
       ProtectedDataPayload payload =
@@ -164,6 +241,7 @@ public class CertificateRequestDeserializerTest {
               certRequest.getProtectedData(),
               certRequest.getChallenge(),
               certRequest.getDeviceInfoEncoded(),
+              certRequest.getMacedKeysMac(),
               fakeKeyPair);
     } catch (CryptoException e) {
       assertEquals(CryptoException.DECRYPTION_FAILURE, e.getErrorCode());
@@ -173,7 +251,7 @@ public class CertificateRequestDeserializerTest {
   }
 
   @Test
-  public void TestWrongChallengeAadMacFails() throws Exception {
+  public void testWrongChallengeAadMacFails() throws Exception {
     byte[] badChallenge = Arrays.copyOf(challenge, challenge.length);
     badChallenge[0] = 12;
     try {
@@ -182,6 +260,7 @@ public class CertificateRequestDeserializerTest {
               certRequest.getProtectedData(),
               badChallenge,
               certRequest.getDeviceInfoEncoded(),
+              certRequest.getMacedKeysMac(),
               serverKeyPair);
     } catch (CryptoException e) {
       assertEquals(CryptoException.MAC_WITH_AAD_SIGNATURE_VERIFICATION_FAILED, e.getErrorCode());
@@ -191,13 +270,14 @@ public class CertificateRequestDeserializerTest {
   }
 
   @Test
-  public void TestWrongDeviceInfoAadMacFails() throws Exception {
+  public void testWrongDeviceInfoAadMacFails() throws Exception {
     try {
       ProtectedDataPayload payload =
           new ProtectedDataPayload(
               certRequest.getProtectedData(),
               certRequest.getChallenge(),
               new byte[] {-123, 97, 97, 97, 98, 97, 99, 97, 100, 97, 102},
+              certRequest.getMacedKeysMac(),
               serverKeyPair);
     } catch (CryptoException e) {
       assertEquals(CryptoException.MAC_WITH_AAD_SIGNATURE_VERIFICATION_FAILED, e.getErrorCode());
@@ -225,12 +305,13 @@ public class CertificateRequestDeserializerTest {
             certRequest.getProtectedData(),
             challenge,
             certRequest.getDeviceInfoEncoded(),
+            certRequest.getMacedKeysMac(),
             serverKeyPair);
     assertNotNull(payload);
   }
 
   @Test
-  public void TestAdditionalSignatureBadRootSigFails() throws Exception {
+  public void testAdditionalSignatureBadRootSigFails() throws Exception {
     Sign1Message signingCert = new Sign1Message();
     Sign1Message deviceCert = new Sign1Message();
     signingCert.addAttribute(HeaderKeys.Algorithm, AlgorithmID.EDDSA.AsCBOR(), Attribute.PROTECTED);
@@ -262,6 +343,7 @@ public class CertificateRequestDeserializerTest {
               certRequest.getProtectedData(),
               challenge,
               certRequest.getDeviceInfoEncoded(),
+              certRequest.getMacedKeysMac(),
               serverKeyPair);
     } catch (CryptoException e) {
       assertEquals(e.getErrorCode(), CryptoException.VERIFICATION_FAILURE);
@@ -271,7 +353,7 @@ public class CertificateRequestDeserializerTest {
   }
 
   @Test
-  public void TestAdditionalSignatureBadLeafSigFailes() throws Exception {
+  public void testAdditionalSignatureBadLeafSigFails() throws Exception {
     Sign1Message signingCert = new Sign1Message();
     Sign1Message deviceCert = new Sign1Message();
     signingCert.addAttribute(HeaderKeys.Algorithm, AlgorithmID.EDDSA.AsCBOR(), Attribute.PROTECTED);
@@ -303,6 +385,7 @@ public class CertificateRequestDeserializerTest {
               certRequest.getProtectedData(),
               challenge,
               certRequest.getDeviceInfoEncoded(),
+              certRequest.getMacedKeysMac(),
               serverKeyPair);
     } catch (CryptoException e) {
       assertEquals(e.getErrorCode(), CryptoException.VERIFICATION_FAILURE);
@@ -312,7 +395,7 @@ public class CertificateRequestDeserializerTest {
   }
 
   @Test
-  public void TestAdditionalSignatureWrongDeviceKeyFails() throws Exception {
+  public void testAdditionalSignatureWrongDeviceKeyFails() throws Exception {
     Sign1Message signingCert = new Sign1Message();
     Sign1Message deviceCert = new Sign1Message();
     signingCert.addAttribute(HeaderKeys.Algorithm, AlgorithmID.EDDSA.AsCBOR(), Attribute.PROTECTED);
@@ -344,6 +427,7 @@ public class CertificateRequestDeserializerTest {
               certRequest.getProtectedData(),
               challenge,
               certRequest.getDeviceInfoEncoded(),
+              certRequest.getMacedKeysMac(),
               serverKeyPair);
     } catch (CryptoException e) {
       assertEquals(e.getErrorCode(), CryptoException.VERIFICATION_FAILURE);

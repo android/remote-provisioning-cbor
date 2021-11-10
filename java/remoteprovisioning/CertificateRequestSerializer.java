@@ -32,7 +32,7 @@ import java.util.Arrays;
 import org.bouncycastle.crypto.AsymmetricCipherKeyPair;
 import org.bouncycastle.crypto.params.X25519PublicKeyParameters;
 
-/*
+/**
  * The main purpose of this class is to help test the CertificateRequestDeserializer. A server or
  * tool making use of this library will have no need to put together a CertificateRequest; the CDDL
  * blob will come from the device in question.
@@ -44,6 +44,7 @@ import org.bouncycastle.crypto.params.X25519PublicKeyParameters;
 public class CertificateRequestSerializer {
   private CBORObject mDeviceInfo;
   private X25519PublicKeyParameters mEek;
+  private ECPublicKey mEekP256;
   private CBORObject mPublicKeys;
   private CBORObject mMacKey;
   private CBORObject mChallenge;
@@ -51,6 +52,8 @@ public class CertificateRequestSerializer {
   private CBORObject mAdditionalDkSignatures;
   private OneKey mDkPriv;
   private AsymmetricCipherKeyPair mEphemeralKeyPair;
+  private KeyPair mEphemeralKeyPairP256;
+  private int keyType;
 
   public CertificateRequestSerializer(
       CBORObject deviceInfo,
@@ -71,6 +74,27 @@ public class CertificateRequestSerializer {
     mDkPriv = dkPriv;
     mAdditionalDkSignatures = additionalDkSignatures;
     mEphemeralKeyPair = ephemeralKeyPair;
+  }
+
+  public CertificateRequestSerializer(
+      CBORObject deviceInfo,
+      ECPublicKey eek,
+      CBORObject publicKeys,
+      CBORObject macKey,
+      CBORObject challenge,
+      CBORObject bcc,
+      OneKey dkPriv,
+      CBORObject additionalDkSignatures,
+      KeyPair ephemeralKeyPair) {
+    mDeviceInfo = deviceInfo;
+    mEekP256 = eek;
+    mPublicKeys = publicKeys;
+    mMacKey = macKey;
+    mChallenge = challenge;
+    mBcc = bcc;
+    mDkPriv = dkPriv;
+    mAdditionalDkSignatures = additionalDkSignatures;
+    mEphemeralKeyPairP256 = ephemeralKeyPair;
   }
 
   public X25519PublicKeyParameters getEphemeralPubKey() {
@@ -109,10 +133,11 @@ public class CertificateRequestSerializer {
    *
    * @return CBORObject CBOR array containing the challenge and the device info
    */
-  private CBORObject buildSignedDataAad() {
+  private CBORObject buildSignedDataAad(byte[] macedKeysMac) {
     CBORObject arr = CBORObject.NewArray();
-    arr.Add(mDeviceInfo);
     arr.Add(mChallenge);
+    arr.Add(mDeviceInfo.get(DeviceInfo.DEVICE_INFO_VERIFIED));
+    arr.Add(macedKeysMac);
     return arr;
   }
 
@@ -121,16 +146,16 @@ public class CertificateRequestSerializer {
    *
    * @return CBORObject A CBOR array containing the fields of a COSE_Sign1 Message
    */
-  private CBORObject buildSignedMac() throws CryptoException, CborException {
+  private CBORObject buildSignedMac(byte[] macedKeysMac) throws CryptoException, CborException {
     Sign1Message msg = new Sign1Message();
     try {
-      msg.addAttribute(HeaderKeys.Algorithm, AlgorithmID.EDDSA.AsCBOR(), Attribute.PROTECTED);
+      msg.addAttribute(HeaderKeys.Algorithm, mDkPriv.get(KeyKeys.Algorithm), Attribute.PROTECTED);
     } catch (CoseException e) {
       throw new CborException(
           "Malformed input - this should not happen", e, CborException.SERIALIZATION_ERROR);
     }
-    msg.setExternal(buildSignedDataAad().EncodeToBytes());
-    msg.SetContent(mMacKey.EncodeToBytes());
+    msg.setExternal(buildSignedDataAad(macedKeysMac).EncodeToBytes());
+    msg.SetContent(mMacKey.GetByteString());
     try {
       msg.sign(mDkPriv);
     } catch (CoseException e) {
@@ -145,14 +170,21 @@ public class CertificateRequestSerializer {
     }
   }
 
-  private CBORObject buildProtectedData() throws CborException, CryptoException {
+  private CBORObject buildProtectedData(byte[] macedKeysMac) throws CborException, CryptoException {
     CBORObject protectedDataPayload = CBORObject.NewArray();
-    protectedDataPayload.Add(buildSignedMac());
+    protectedDataPayload.Add(buildSignedMac(macedKeysMac));
     protectedDataPayload.Add(mBcc);
     protectedDataPayload.Add(mAdditionalDkSignatures);
-    CBORObject encMsg =
-        CborUtil.encodeEncryptMessage(
-            protectedDataPayload.EncodeToBytes(), mEphemeralKeyPair, mEek);
+    CBORObject encMsg;
+    if (mEek == null) {
+      encMsg =
+          CborUtil.encodeEncryptMessage(
+              protectedDataPayload.EncodeToBytes(), mEphemeralKeyPairP256, mEekP256);
+    } else {
+      encMsg =
+          CborUtil.encodeEncryptMessage(
+              protectedDataPayload.EncodeToBytes(), mEphemeralKeyPair, mEek);
+    }
     return encMsg;
   }
 
@@ -166,24 +198,27 @@ public class CertificateRequestSerializer {
     CBORObject certRequest = CBORObject.NewArray();
     certRequest.Add(mDeviceInfo);
     certRequest.Add(mChallenge);
-    certRequest.Add(buildProtectedData());
-    certRequest.Add(buildMacedKeysToSign());
+    CBORObject macedKeysToSign = buildMacedKeysToSign();
+    certRequest.Add(buildProtectedData(macedKeysToSign.get(3).GetByteString()));
+    certRequest.Add(macedKeysToSign);
     return certRequest.EncodeToBytes();
   }
 
-  /*
+  /**
    * A builder class to put together all the relevant information needed to form a
    * CertificateRequest as defined by the CDDL
    */
   public static final class Builder {
     private CBORObject mDeviceInfo;
     private X25519PublicKeyParameters mEek;
+    private ECPublicKey mEekP256;
     private CBORObject mPublicKeys;
     private CBORObject mMacKey;
     private CBORObject mChallenge;
     private CBORObject mBcc;
     private CBORObject mAdditionalDkSignatures = CBORObject.NewMap();
     private OneKey mDkPriv;
+    private int keyType;
 
     /*
      * Builder constructor that takes an X25519 public key as an input parameter. This key
@@ -191,6 +226,10 @@ public class CertificateRequestSerializer {
      */
     public Builder(X25519PublicKeyParameters eek) {
       mEek = eek;
+    }
+
+    public Builder(ECPublicKey eek) {
+      mEekP256 = eek;
     }
 
     public Builder setDeviceInfo(CBORObject deviceInfo) {
@@ -267,16 +306,29 @@ public class CertificateRequestSerializer {
     }
 
     public CertificateRequestSerializer build() throws CryptoException {
-      return new CertificateRequestSerializer(
-          mDeviceInfo,
-          mEek,
-          mPublicKeys,
-          mMacKey,
-          mChallenge,
-          mBcc,
-          mDkPriv,
-          mAdditionalDkSignatures,
-          CryptoUtil.genX25519());
+      if (mEek == null) {
+        return new CertificateRequestSerializer(
+            mDeviceInfo,
+            mEekP256,
+            mPublicKeys,
+            mMacKey,
+            mChallenge,
+            mBcc,
+            mDkPriv,
+            mAdditionalDkSignatures,
+            CryptoUtil.genP256());
+      } else {
+        return new CertificateRequestSerializer(
+            mDeviceInfo,
+            mEek,
+            mPublicKeys,
+            mMacKey,
+            mChallenge,
+            mBcc,
+            mDkPriv,
+            mAdditionalDkSignatures,
+            CryptoUtil.genX25519());
+      }
     }
   }
 }

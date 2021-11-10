@@ -28,17 +28,30 @@ import COSE.Sign1Message;
 import com.upokecenter.cbor.CBORObject;
 import com.upokecenter.cbor.CBORType;
 import java.math.BigInteger;
-import java.security.*;
-import java.security.spec.*;
+import java.security.AlgorithmParameters;
+import java.security.InvalidAlgorithmParameterException;
+import java.security.InvalidKeyException;
+import java.security.KeyFactory;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.PublicKey;
+import java.security.SecureRandom;
+import java.security.interfaces.ECPrivateKey;
+import java.security.interfaces.ECPublicKey;
+import java.security.spec.ECGenParameterSpec;
+import java.security.spec.ECParameterSpec;
+import java.security.spec.ECPoint;
+import java.security.spec.ECPublicKeySpec;
+import java.security.spec.InvalidKeySpecException;
+import java.security.spec.InvalidParameterSpecException;
 import java.util.Arrays;
 import javax.crypto.Cipher;
+import javax.crypto.KeyAgreement;
 import javax.crypto.Mac;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
-import net.i2p.crypto.eddsa.EdDSAPrivateKey;
-import net.i2p.crypto.eddsa.EdDSASecurityProvider;
-import net.i2p.crypto.eddsa.spec.EdDSANamedCurveTable;
-import net.i2p.crypto.eddsa.spec.EdDSAPublicKeySpec;
 import org.bouncycastle.crypto.AsymmetricCipherKeyPair;
 import org.bouncycastle.crypto.AsymmetricCipherKeyPairGenerator;
 import org.bouncycastle.crypto.agreement.X25519Agreement;
@@ -47,7 +60,7 @@ import org.bouncycastle.crypto.params.X25519KeyGenerationParameters;
 import org.bouncycastle.crypto.params.X25519PrivateKeyParameters;
 import org.bouncycastle.crypto.params.X25519PublicKeyParameters;
 
-/*
+/**
  * This class is a cryptographic utility class that implements a variety of functions used by other
  * portions of this library.
  */
@@ -56,6 +69,8 @@ public class CryptoUtil {
   // These curve values are taken from Table 22 in RFC 8152.
   private static final int X25519 = 4;
   private static final int ED25519 = 6;
+
+  private CryptoUtil() {}
 
   /*
    * Generates the shared public key material from ECDH used to derive the sender and receiver AES
@@ -71,6 +86,14 @@ public class CryptoUtil {
     byte[] secret = new byte[agreement.getAgreementSize()];
     agreement.calculateAgreement(pub, secret, 0 /* offset */);
     return secret;
+  }
+
+  private static byte[] deriveSharedKeyMaterial(ECPrivateKey priv, ECPublicKey pub)
+      throws NoSuchAlgorithmException, InvalidKeyException {
+    KeyAgreement ka = KeyAgreement.getInstance("ECDH");
+    ka.init(priv);
+    ka.doPhase(pub, true /* lastPhase */);
+    return ka.generateSecret();
   }
 
   /*
@@ -93,11 +116,35 @@ public class CryptoUtil {
       X25519PublicKeyParameters pub = (X25519PublicKeyParameters) keyPair.getPublic();
       byte[] context =
           CborUtil.buildKdfContext(
-              CborUtil.buildParty("device", pub.getEncoded()),
+              CborUtil.buildParty("client", pub.getEncoded()),
               CborUtil.buildParty("server", otherPub.getEncoded()));
       byte[] keyMaterial =
           deriveSharedKeyMaterial((X25519PrivateKeyParameters) keyPair.getPrivate(), otherPub);
-      return computeHkdf("HmacSha256", keyMaterial, null /* salt */, context, 16 /* size */);
+      return computeHkdf("HmacSha256", keyMaterial, null /* salt */, context, 32 /* size */);
+    } catch (NoSuchAlgorithmException e) {
+      throw new CryptoException(
+          "Missing ECDH algorithm provider", e, CryptoException.NO_SUCH_ALGORITHM);
+    } catch (InvalidKeyException e) {
+      throw new CryptoException("Derived ECDH key is malformed", e, CryptoException.MALFORMED_KEY);
+    }
+  }
+
+  public static byte[] deriveSharedKeySend(KeyPair keyPair, ECPublicKey otherPub)
+      throws CryptoException {
+    try {
+      if (!(keyPair.getPublic() instanceof ECPublicKey
+            && keyPair.getPrivate() instanceof ECPrivateKey)) {
+        throw new CryptoException("KeyPair is not an instance of an EC keypair.",
+            CryptoException.ENCRYPTION_FAILURE);
+      }
+      ECPublicKey pub = (ECPublicKey) keyPair.getPublic();
+      byte[] context =
+          CborUtil.buildKdfContext(
+              CborUtil.buildParty("client", CryptoUtil.p256PubKeyToBytes(pub)),
+              CborUtil.buildParty("server", CryptoUtil.p256PubKeyToBytes(otherPub)));
+      byte[] keyMaterial =
+          deriveSharedKeyMaterial((ECPrivateKey) keyPair.getPrivate(), otherPub);
+      return computeHkdf("HmacSha256", keyMaterial, null /* salt */, context, 32 /* size */);
     } catch (NoSuchAlgorithmException e) {
       throw new CryptoException(
           "Missing ECDH algorithm provider", e, CryptoException.NO_SUCH_ALGORITHM);
@@ -126,11 +173,11 @@ public class CryptoUtil {
       X25519PublicKeyParameters pub = (X25519PublicKeyParameters) keyPair.getPublic();
       byte[] context =
           CborUtil.buildKdfContext(
-              CborUtil.buildParty("device", otherPub.getEncoded()),
+              CborUtil.buildParty("client", otherPub.getEncoded()),
               CborUtil.buildParty("server", pub.getEncoded()));
       byte[] keyMaterial =
           deriveSharedKeyMaterial((X25519PrivateKeyParameters) keyPair.getPrivate(), otherPub);
-      return computeHkdf("HmacSha256", keyMaterial, null /* salt */, context, 16 /* size */);
+      return computeHkdf("HmacSha256", keyMaterial, null /* salt */, context, 32 /* size */);
     } catch (NoSuchAlgorithmException e) {
       throw new CryptoException(
           "Missing ECDH algorithm provider", e, CryptoException.NO_SUCH_ALGORITHM);
@@ -139,6 +186,24 @@ public class CryptoUtil {
     }
   }
 
+  public static byte[] deriveSharedKeyReceive(
+      KeyPair keyPair, ECPublicKey otherPub) throws CryptoException {
+    try {
+      ECPublicKey pub = (ECPublicKey) keyPair.getPublic();
+      byte[] context =
+          CborUtil.buildKdfContext(
+              CborUtil.buildParty("client", CryptoUtil.p256PubKeyToBytes(otherPub)),
+              CborUtil.buildParty("server", CryptoUtil.p256PubKeyToBytes(pub)));
+      byte[] keyMaterial =
+          deriveSharedKeyMaterial((ECPrivateKey) keyPair.getPrivate(), otherPub);
+      return computeHkdf("HmacSha256", keyMaterial, null /* salt */, context, 32 /* size */);
+    } catch (NoSuchAlgorithmException e) {
+      throw new CryptoException(
+          "Missing ECDH algorithm provider", e, CryptoException.NO_SUCH_ALGORITHM);
+    } catch (InvalidKeyException e) {
+      throw new CryptoException("Derived ECDH key is malformed", e, CryptoException.MALFORMED_KEY);
+    }
+  }
   /*
    * Generates an X25519 ECDH key pair.
    *
@@ -147,23 +212,44 @@ public class CryptoUtil {
   public static AsymmetricCipherKeyPair genX25519() {
     AsymmetricCipherKeyPairGenerator kpGen = new X25519KeyPairGenerator();
     kpGen.init(new X25519KeyGenerationParameters(new SecureRandom()));
-
     return kpGen.generateKeyPair();
   }
 
-  /*
-   * Convert an EdDSAPrivateKey to a COSE Key object
-   */
-  private static OneKey eddsaToOneKey(EdDSAPrivateKey priv) {
-    byte[] rgbD = priv.getSeed();
-    OneKey key = new OneKey();
-    key.add(KeyKeys.KeyType, KeyKeys.KeyType_OKP);
-    key.add(KeyKeys.Algorithm, AlgorithmID.EDDSA.AsCBOR());
-    key.add(KeyKeys.OKP_Curve, KeyKeys.OKP_Ed25519);
-    key.add(KeyKeys.OKP_D, CBORObject.FromObject(rgbD));
-    return key;
+  public static KeyPair genP256() throws CryptoException {
+    try {
+      KeyPairGenerator kpg = KeyPairGenerator.getInstance("EC");
+      kpg.initialize(new ECGenParameterSpec("secp256r1"));
+      return kpg.genKeyPair();
+    } catch (NoSuchAlgorithmException | InvalidAlgorithmParameterException e) {
+      throw new CryptoException("Bad provider", e, CryptoException.NO_SUCH_ALGORITHM);
+    }
   }
 
+  /**
+   * Produces a digest for a P256 key, intended to be used for producing a fingerprint for the EEK.
+   * This digest is SHA-256(X||Y).
+   *
+   * @param pubKey The public key to be digested.
+   *
+   * @return the digest
+   */
+  public static byte[] digestP256(ECPublicKey pubKey) {
+    try {
+      MessageDigest digest = MessageDigest.getInstance("SHA-256");
+      return digest.digest(p256PubKeyToBytes(pubKey));
+    } catch (Exception e) {
+      return null;
+    }
+  }
+
+  /**
+   * Produces a digest for an x25519 key, intended to be used for producing a fingerprint for the
+   * EEK. This digest is SHA-256 over the byte array representing the public key.
+   *
+   * @param pubKey The public key to be digested.
+   *
+   * @return the digest
+   */
   public static byte[] digestX25519(X25519PublicKeyParameters pubKey) {
     try {
       MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -186,6 +272,45 @@ public class CryptoUtil {
     return key;
   }
 
+  /**
+   * Converts an ECC P256 key into a byte array of (X||Y) taking care to strip out leading 0's
+   * to compensate for the way BigInteger's add extra bytes for signed int purposes.
+   *
+   * @param key The key to be converted
+   *
+   * @return the byte array representing (X||Y)
+   */
+  public static byte[] p256PubKeyToBytes(ECPublicKey key) {
+      BigInteger xCoord = key.getW().getAffineX();
+      BigInteger yCoord = key.getW().getAffineY();
+      byte[] formattedKey = new byte[64];
+      byte[] xBytes = xCoord.toByteArray();
+      // BigInteger returns the value as two's complement big endian byte encoding. This means
+      // that a positive, 32-byte value with a leading 1 bit will be converted to a byte array of
+      // length 33 in order to include a leading 0 bit.
+      if (xBytes.length == 33) {
+          System.arraycopy(xBytes, 1 /* offset */, formattedKey, 0 /* offset */, 32);
+      } else {
+          System.arraycopy(xBytes, 0 /* offset */,
+                           formattedKey, 32 - xBytes.length, xBytes.length);
+      }
+      byte[] yBytes = yCoord.toByteArray();
+      if (yBytes.length == 33) {
+          System.arraycopy(yBytes, 1 /* offset */, formattedKey, 32 /* offset */, 32);
+      } else {
+          System.arraycopy(yBytes, 0 /* offset */,
+                           formattedKey, 64 - yBytes.length, yBytes.length);
+      }
+      return formattedKey;
+  }
+
+  /**
+   * Converts a OneKey object to an ECPublicKey after validating the parameters.
+   *
+   * @param key the OneKey to parse and convert.
+   *
+   * @return PublicKey the ECPublicKey represented by the OneKey object
+   */
   public static PublicKey oneKeyToP256PublicKey(OneKey key) throws CborException, CryptoException {
     if (!key.get(KeyKeys.KeyType).equals(KeyKeys.KeyType_EC2)) {
       throw new CborException(
@@ -209,8 +334,8 @@ public class CryptoUtil {
           CborException.INCORRECT_COSE_TYPE);
     }
     try {
-      BigInteger x = new BigInteger(key.get(KeyKeys.EC2_X).GetByteString());
-      BigInteger y = new BigInteger(key.get(KeyKeys.EC2_Y).GetByteString());
+      BigInteger x = new BigInteger(1 /* positive */, key.get(KeyKeys.EC2_X).GetByteString());
+      BigInteger y = new BigInteger(1 /* positive */, key.get(KeyKeys.EC2_Y).GetByteString());
       AlgorithmParameters parameters = AlgorithmParameters.getInstance("EC");
       parameters.init(new ECGenParameterSpec("secp256r1"));
       ECParameterSpec ecParameters = parameters.getParameterSpec(ECParameterSpec.class);
@@ -277,8 +402,7 @@ public class CryptoUtil {
   public static CBORObject createCertificateEd25519(
       OneKey signingKey, X25519PublicKeyParameters pubKey) throws CryptoException {
     try {
-      Security.addProvider(new EdDSASecurityProvider());
-      Sign1Message cert = new Sign1Message();
+      Sign1Message cert = new Sign1Message(false /* emitTag */);
       cert.addAttribute(HeaderKeys.Algorithm, AlgorithmID.EDDSA.AsCBOR(), Attribute.PROTECTED);
       cert.SetContent(cborEncodeX25519PubKey(pubKey));
       cert.sign(signingKey);
@@ -300,8 +424,7 @@ public class CryptoUtil {
   public static CBORObject createCertificateEd25519(OneKey signingKey, OneKey pubKey)
       throws CryptoException {
     try {
-      Security.addProvider(new EdDSASecurityProvider());
-      Sign1Message cert = new Sign1Message();
+      Sign1Message cert = new Sign1Message(false /* emitTag */);
       cert.addAttribute(HeaderKeys.Algorithm, AlgorithmID.EDDSA.AsCBOR(), Attribute.PROTECTED);
       cert.SetContent(pubKey.PublicKey().EncodeToBytes());
       cert.sign(signingKey);
@@ -311,6 +434,22 @@ public class CryptoUtil {
     }
   }
 
+  public static CBORObject createCertificate(OneKey signingKey, OneKey pubKey,
+      AlgorithmID certAlg, AlgorithmID keyAlg)
+      throws CryptoException {
+    try {
+      Sign1Message cert = new Sign1Message(false /* emitTag */);
+      cert.addAttribute(HeaderKeys.Algorithm, certAlg.AsCBOR(), Attribute.PROTECTED);
+      CBORObject pubKeyObj = pubKey.AsCBOR();
+      pubKeyObj.Add(CBORObject.FromObject(2), digestP256((ECPublicKey) pubKey.AsPublicKey()));
+      pubKeyObj.Add(CBORObject.FromObject(3), keyAlg.AsCBOR());
+      cert.SetContent(pubKeyObj.EncodeToBytes());
+      cert.sign(signingKey);
+      return cert.EncodeToCBORObject();
+    } catch (CoseException e) {
+      throw new CryptoException("Failed to sign certificate", e, CryptoException.SIGNING_FAILURE);
+    }
+  }
   /*
    * Checks that the signature on the {@code certToVerifyCbor} certificate is verified with the
    * public key from the corresponding {@code verifyingCertCbor} certificate.
@@ -362,8 +501,8 @@ public class CryptoUtil {
       if (expectedKey != null) {
         OneKey verifiedKey = new OneKey(CBORObject.DecodeFromBytes(certToVerify.GetContent()));
         if (!Arrays.equals(
-            (byte[]) verifiedKey.get(KeyKeys.OKP_X).GetByteString(),
-            (byte[]) expectedKey.get(KeyKeys.OKP_X).GetByteString())) {
+            verifiedKey.get(KeyKeys.OKP_X).GetByteString(),
+            expectedKey.get(KeyKeys.OKP_X).GetByteString())) {
           throw new CryptoException(
               "Key in certificate does not match the expected key",
               CryptoException.VERIFICATION_FAILURE);
@@ -376,7 +515,7 @@ public class CryptoUtil {
     return true;
   }
 
-  /*
+  /**
    * Retrieves a key signed by a certificate that exists within a COSE Sign1Message object after
    * validating that the key properties recorded in the COSE object match what is expected.
    *
@@ -436,7 +575,22 @@ public class CryptoUtil {
     }
   }
 
-  /*
+  /**
+   * Extracts the content field of a Sign1Message and converts it into an
+   * X25519PublicKeyParameters object.
+   *
+   * @param cert the Sign1Message COSE object
+   *
+   * @return PublicKey the X25519 key that was in the content field of the Sign1Message
+   */
+  private static X25519PublicKeyParameters getX25519PublicKeyFromCert(Sign1Message cert)
+      throws CryptoException {
+    byte[] key =
+        CBORObject.DecodeFromBytes(cert.GetContent()).get(KeyKeys.OKP_X.AsCBOR()).GetByteString();
+    return byteArrayToX25519PublicKey(key);
+  }
+
+  /**
    * Retrieves a key signed by a certificate that exists within a COSE Sign1Message object after
    * validating that the key properties recorded in the COSE object match what is expected.
    *
@@ -444,7 +598,7 @@ public class CryptoUtil {
    *
    * @return PublicKey the EdDSA key that was in the Sign1Message content field
    */
-  public static PublicKey getEd25519PublicKeyFromCert(CBORObject certObj)
+  public static byte[] getEd25519PublicKeyFromCert(CBORObject certObj)
       throws CborException, CryptoException {
     try {
       Sign1Message cert =
@@ -502,48 +656,14 @@ public class CryptoUtil {
    *
    * @return PublicKey the Ed25519 key that was in the content field of the Sign1Message
    */
-  private static PublicKey getEd25519PublicKeyFromCert(Sign1Message cert)
+  private static byte[] getEd25519PublicKeyFromCert(Sign1Message cert)
       throws CborException, CryptoException {
     try {
       OneKey key = new OneKey(CBORObject.DecodeFromBytes(cert.GetContent()));
-      return byteArrayToEd25519PublicKey(key.get(KeyKeys.OKP_X).ToObject(byte[].class));
+      return key.get(KeyKeys.OKP_X).ToObject(byte[].class);
     } catch (CoseException e) {
       throw new CborException(
           "Failed to decode certificate", e, CborException.DESERIALIZATION_ERROR);
-    }
-  }
-
-  /*
-   * Extracts the content field of a Sign1Message and converts it into an
-   * X25519PublicKeyParameters object.
-   *
-   * @param cert the Sign1Message COSE object
-   *
-   * @return PublicKey the X25519 key that was in the content field of the Sign1Message
-   */
-  private static X25519PublicKeyParameters getX25519PublicKeyFromCert(Sign1Message cert)
-      throws CryptoException {
-    byte[] key =
-        CBORObject.DecodeFromBytes(cert.GetContent()).get(KeyKeys.OKP_X.AsCBOR()).GetByteString();
-    return byteArrayToX25519PublicKey(key);
-  }
-
-  /*
-   * Converts the byte array representation of an Ed25519 public key into an EdDSAPublicKey object
-   *
-   * @param xCoord the public X coordinate represented as a byte array
-   *
-   * @return PublicKey the encoded key as a proper EdDSAPublicKey
-   */
-  public static PublicKey byteArrayToEd25519PublicKey(byte[] xCoord) throws CryptoException {
-    try {
-      KeyFactory kf = KeyFactory.getInstance("EdDSA", "EdDSA");
-      EdDSAPublicKeySpec pubSpec =
-          new EdDSAPublicKeySpec(xCoord, EdDSANamedCurveTable.ED_25519_CURVE_SPEC);
-      return kf.generatePublic(pubSpec);
-    } catch (InvalidKeySpecException | NoSuchAlgorithmException | NoSuchProviderException e) {
-      throw new CryptoException(
-          "X25519 provider likely not available", e, CryptoException.NO_SUCH_ALGORITHM);
     }
   }
 
@@ -558,6 +678,27 @@ public class CryptoUtil {
   public static X25519PublicKeyParameters byteArrayToX25519PublicKey(byte[] uCoordArr)
       throws CryptoException {
     return new X25519PublicKeyParameters(uCoordArr, 0 /* offset */);
+  }
+
+  /**
+   * Converts the byte array representation of an Ed25519 private key into a OneKey object
+   *
+   * @param dCoord a byte array representing the private portion of an Ed25519 keypair
+   *
+   * @return PublicKey the encoded private key as a OneKey object.
+   */
+  public static OneKey byteArrayToEd25519PrivateKey(byte[] dCoord) throws CryptoException {
+    OneKey key = new OneKey();
+    key.add(KeyKeys.KeyType, KeyKeys.KeyType_OKP);
+    key.add(KeyKeys.Algorithm, AlgorithmID.EDDSA.AsCBOR());
+    key.add(KeyKeys.OKP_Curve, KeyKeys.OKP_Ed25519);
+    key.add(KeyKeys.OKP_D, CBORObject.FromObject(dCoord));
+    try {
+      return new OneKey(key.AsCBOR());
+    } catch (CoseException e) {
+      throw new CryptoException(
+          "Failed to generate a OneKey object", e, CryptoException.KEY_GENERATION_FAILURE);
+    }
   }
 
   public static boolean validateBcc(CBORObject chain) throws CborException, CryptoException {
@@ -612,7 +753,7 @@ public class CryptoUtil {
    *     255.DigestSize, where DigestSize is the size of the underlying HMAC.
    * @return size pseudorandom bytes.
    */
-  private static byte[] computeHkdf(
+  public static byte[] computeHkdf(
       String macAlgorithm, final byte[] ikm, final byte[] salt, final byte[] info, int size) {
     Mac mac = null;
     try {

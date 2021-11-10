@@ -17,73 +17,69 @@
 package remoteprovisioning;
 
 
+import COSE.AlgorithmID;
 import COSE.CoseException;
 import COSE.KeyKeys;
 import COSE.OneKey;
 import com.upokecenter.cbor.CBORObject;
-import com.upokecenter.cbor.CBORType;
+import java.security.interfaces.ECPrivateKey;
+import java.security.interfaces.ECPublicKey;
 import org.bouncycastle.crypto.params.X25519PublicKeyParameters;
 
-/*
+/**
  * This class is to be used to generate EEK certificate chains to send to a device so that the
  * device can use the X25519 public key contained in the leaf certificate to encrypt the payload it
  * will send back.
  */
 public class EekCertChainSerializer {
-  private CBORObject eekChain;
+  private final CBORObject eekChain;
 
-  /*
+  /**
    * Constructs an EndpointEncryptionKeySerializer from the actual keys that will be used to
-   * generate the EEK certificate chain.
+   * generate the EEK certificate chain. The signing private key is provided as a serialized byte[].
    *
    * The root certificate corresponds to the offline key pair that is used to sign an intermediate
    * for production use. This is a CBOR encoded binary blob.
+   *
+   * @param encodedRootCert The self-signed encoded COSE_Sign1 corresponding to the root key.
+   * @param encodedIntCert The COSE_Sign1 corresponding to the intermediate key signed by the root
+   *                       key.
+   * @param serializedIntSigningKey The byte array representing the Ed25519 private key used to sign
+   *                                the X25519 leaf key.
+   * @param eek The X25519 public key which will be used to encrypt the ProtectedData CBOR struct.
    */
   public EekCertChainSerializer(
-      byte[] cborEncodedCerts, OneKey intSigningKey, X25519PublicKeyParameters eek)
+      byte[] encodedRootCert, byte[] encodedIntCert,
+      byte[] serializedIntSigningKey, X25519PublicKeyParameters eek)
       throws CborException, CryptoException {
-    eekChain = CBORObject.DecodeFromBytes(cborEncodedCerts);
-    if (eekChain.getType() != CBORType.Array) {
-      throw new CborException(
-          "cborEncodedCerts decodes to the wrong type",
-          CBORType.Array,
-          eekChain.getType(),
-          CborException.TYPE_MISMATCH);
-    }
-    eekChain.Add(CryptoUtil.createCertificateEd25519(intSigningKey, eek));
+    eekChain = CBORObject.NewArray();
+    CBORObject rootCert = CBORObject.DecodeFromBytes(encodedRootCert);
+    CBORObject intCert = CBORObject.DecodeFromBytes(encodedIntCert);
+    eekChain.Add(rootCert);
+    eekChain.Add(intCert);
+    eekChain.Add(CryptoUtil.createCertificateEd25519(
+        CryptoUtil.byteArrayToEd25519PrivateKey(serializedIntSigningKey), eek));
   }
 
-  private static OneKey serializedKeyToOneKey(byte[] serializedKey)
-      throws CborException, CryptoException {
-    CBORObject key = CBORObject.DecodeFromBytes(serializedKey);
-    if (key.getType() != CBORType.Map) {
-      throw new CborException(
-          "intSigningKey decodes to the wrong type",
-          CBORType.Map,
-          key.getType(),
-          CborException.TYPE_MISMATCH);
-    }
+  public EekCertChainSerializer(
+      byte[] encodedRootCert,
+      byte[] encodedIntCert,
+      ECPrivateKey intSigningKey,
+      ECPublicKey eek) throws CborException, CryptoException {
+    eekChain = CBORObject.NewArray();
+    CBORObject rootCert = CBORObject.DecodeFromBytes(encodedRootCert);
+    CBORObject intCert = CBORObject.DecodeFromBytes(encodedIntCert);
+    eekChain.Add(rootCert);
+    eekChain.Add(intCert);
     try {
-      return new OneKey(key);
+      eekChain.Add(CryptoUtil.createCertificate(new OneKey(null, intSigningKey),
+                                                new OneKey(eek, null),
+                                                AlgorithmID.ECDSA_256,
+                                                AlgorithmID.ECDH_ES_HKDF_256));
     } catch (CoseException e) {
-      throw new CborException(
-          "Malformed input to OneKey constructor", e, CborException.SERIALIZATION_ERROR);
+      throw new CryptoException("Failed to encode key.", e, CryptoException.MALFORMED_KEY);
     }
   }
-
-  /*
-   * Constructs an EndpointEncryptionKeySerializer from the actual keys that will be used to
-   * generate the EEK certificate chain. The signing key is provided as a serialized byte[].
-   *
-   * The root certificate corresponds to the offline key pair that is used to sign an intermediate
-   * for production use. This is a CBOR encoded binary blob.
-   */
-  public EekCertChainSerializer(
-      byte[] cborEncodedCerts, byte[] serializedIntSigningKey, X25519PublicKeyParameters eek)
-      throws CborException, CryptoException {
-    this(cborEncodedCerts, serializedKeyToOneKey(serializedIntSigningKey), eek);
-  }
-
   /*
    * Constructs a CBOR encoded byte array of the EEK certificate chain
    *
@@ -101,7 +97,9 @@ public class EekCertChainSerializer {
   public static byte[] generateEekChain(X25519PublicKeyParameters eek) throws CryptoException {
     try {
       OneKey eekRootKeyPair = OneKey.generateKey(KeyKeys.OKP_Ed25519);
+      eekRootKeyPair.add(KeyKeys.Algorithm, AlgorithmID.EDDSA.AsCBOR());
       OneKey eekIntKeyPair = OneKey.generateKey(KeyKeys.OKP_Ed25519);
+      eekIntKeyPair.add(KeyKeys.Algorithm, AlgorithmID.EDDSA.AsCBOR());
       CBORObject certArray = CBORObject.NewArray();
       certArray.Add(
           CryptoUtil.createCertificateEd25519(eekRootKeyPair, eekRootKeyPair.PublicKey()));

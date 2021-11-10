@@ -22,10 +22,10 @@ import COSE.MAC0Message;
 import COSE.OneKey;
 import com.upokecenter.cbor.CBORObject;
 import com.upokecenter.cbor.CBORType;
-import java.security.*;
+import java.security.PublicKey;
 import java.util.ArrayList;
 
-/*
+/**
  * CertificateRequestDeserializer is used by any server that receives CertificateRequest CBOR blobs
  * from an Android device. This class handles verifying all data on the request as well as
  * retrieving relevant info from the request in a privacy preserving way.
@@ -64,15 +64,11 @@ public class CertificateRequestDeserializer {
   private static final int CERTIFICATE_REQUEST_CHALLENGE_INDEX = 1;
   private static final int CERTIFICATE_REQUEST_PROTECTED_DATA_INDEX = 2;
   private static final int CERTIFICATE_REQUEST_MACED_KEYS_INDEX = 3;
-
-  private static final String DEVICE_INFO_BRAND_KEY = "brand";
-  private static final String DEVICE_INFO_MANUFACTURER_KEY = "manufacturer";
-  private static final String DEVICE_INFO_PRODUCT_KEY = "product";
-  private static final String DEVICE_INFO_MODEL_KEY = "model";
-  private static final String DEVICE_INFO_BOARD_KEY = "board";
+  private static final int MAC_INDEX = 3;
 
   private CBORObject mDeviceInfo;
   private byte[] mChallenge;
+  private byte[] mMacedKeysMac;
 
   private MAC0Message mMacedKeysToSign;
   private CBORObject mProtectedData;
@@ -103,6 +99,8 @@ public class CertificateRequestDeserializer {
       mDeviceInfo = certRequest.get(CERTIFICATE_REQUEST_DEVICE_INFO_INDEX);
       mChallenge = certRequest.get(CERTIFICATE_REQUEST_CHALLENGE_INDEX).ToObject(byte[].class);
       mProtectedData = certRequest.get(CERTIFICATE_REQUEST_PROTECTED_DATA_INDEX);
+      mMacedKeysMac =
+          certRequest.get(CERTIFICATE_REQUEST_MACED_KEYS_INDEX).get(MAC_INDEX).GetByteString();
       mMacedKeysToSign.DecodeFromCBORObject(certRequest.get(CERTIFICATE_REQUEST_MACED_KEYS_INDEX));
     } catch (CoseException e) {
       throw new CborException(
@@ -110,7 +108,7 @@ public class CertificateRequestDeserializer {
     }
   }
 
-  /*
+  /**
    * Parses a provided DeviceInfo CBOR object and populates a DeviceInfo object with the contained
    * values
    *
@@ -118,17 +116,10 @@ public class CertificateRequestDeserializer {
    *          info field
    */
   private static DeviceInfo parseDeviceInfo(CBORObject cborDeviceInfo) throws CborException {
-    if (cborDeviceInfo.getType() != CBORType.Map) {
-      throw new CborException(
-          "DeviceInfo Type Wrong",
-          CBORType.Map,
-          cborDeviceInfo.getType(),
-          CborException.TYPE_MISMATCH);
-    }
     return new DeviceInfo(cborDeviceInfo);
   }
 
-  /*
+  /**
    * Returns the deserialized device info.
    *
    * @return DeviceInfo the device info structure containing information on the device
@@ -137,40 +128,44 @@ public class CertificateRequestDeserializer {
     return parseDeviceInfo(mDeviceInfo);
   }
 
-  /*
+  /**
    * Returns the device info in a CBOR encoded array. This info is needed by the server that will
    * decrypt the ProtectedData object. It is part of the AAD and will be needed to verify the
    * signature on ProtectedData.
    *
-   * @return byte[] the encoded device info
+   * @return the encoded device info
    */
   public byte[] getDeviceInfoEncoded() {
     return mDeviceInfo.EncodeToBytes();
   }
 
-  /*
+  /**
    * Returns the challenge that was sent to the device by the server. This challenge is needed
    * by the server that will decrypt the ProtectedData object. It is part of the AAD and will be
    * needed to verify the signature on ProtectedData.
    *
-   * Returns byte[] the deserialized challenge
+   * @return the deserialized challenge
    */
   public byte[] getChallenge() {
     return mChallenge;
   }
 
-  /*
+  /**
    * Provides the encrypted ProtectedData entry in the CertificateRequest array as a CBOR encoded
    * byte array. This is intended to be used to retrieve this portion of the CertificateRequest
    * so that it may be sent off to the server that contains the EEK keys which will decrypt it.
    *
-   * @return byte[] the CBOR encoded ProtectedData entry
+   * @return the CBOR encoded ProtectedData entry
    */
   public byte[] getProtectedData() {
     return mProtectedData.EncodeToBytes();
   }
 
-  /*
+  public byte[] getMacedKeysMac() {
+    return mMacedKeysMac;
+  }
+
+  /**
    * Returns the CBOR encoding of the MACed public keys that need to be signed and returned to the
    * device. To preserve privacy, the service decrypts the protected data payload (which contains
    * the device public key and the MAC key) should not also check the signatures on the keys and
@@ -179,7 +174,7 @@ public class CertificateRequestDeserializer {
    * object so that it can be sent separately over the wire to whichever service will validate
    * the public key request.
    *
-   * @return byte[] the CBOR encoded attestation public keys
+   * @return the CBOR encoded attestation public keys
    */
   public byte[] getMacedKeysToSign() throws CborException {
     try {
@@ -190,7 +185,7 @@ public class CertificateRequestDeserializer {
     }
   }
 
-  /*
+  /**
    * Parses the CBOR blob, {@code serializedMacedKeysToSign}, containing the MACed keys and
    * returns the individual public keys after checking the MAC with the provided {@code macKey}.
    * The {@code macKey} should have been retrieved from the ProtectedData object.
@@ -211,7 +206,7 @@ public class CertificateRequestDeserializer {
       throw new CborException("Couldn't decode MACed keys", e, CborException.DESERIALIZATION_ERROR);
     }
 
-    ArrayList<PublicKey> deserializedPublicKeys = new ArrayList<PublicKey>();
+    ArrayList<PublicKey> deserializedPublicKeys = new ArrayList<>();
     CBORObject serializedPublicKeys = CBORObject.DecodeFromBytes(macedKeysToSign.GetContent());
     if (serializedPublicKeys.getType() != CBORType.Array) {
       throw new CborException(

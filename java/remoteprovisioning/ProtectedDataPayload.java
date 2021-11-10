@@ -25,15 +25,14 @@ import COSE.OneKey;
 import COSE.Sign1Message;
 import com.upokecenter.cbor.CBORObject;
 import com.upokecenter.cbor.CBORType;
-import java.security.*;
+import java.security.KeyPair;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
-import net.i2p.crypto.eddsa.EdDSAPublicKey;
 import org.bouncycastle.crypto.AsymmetricCipherKeyPair;
 
-/*
+/**
  * This is a convenience class for returning the results of the encrypted portion of the certificate
  * request from a device. The BCC and MAC key are both contained in this portion of the request, so
  * class provides a handy interface for storing and retrieving them from the decryption call.
@@ -49,6 +48,8 @@ import org.bouncycastle.crypto.AsymmetricCipherKeyPair;
  * key that corresponds to them.
  */
 public class ProtectedDataPayload {
+
+  private boolean serverExperiment = false;
 
   // The device key index and at least a self signed cert
   private static final int BCC_LENGTH_MINIMUM = 2;
@@ -69,22 +70,35 @@ public class ProtectedDataPayload {
 
   private byte[] mDevicePublicKey;
   private byte[] mMacKey;
-  private HashMap<String, byte[]> mSignerIdToKey;
+  private final HashMap<String, byte[]> mSignerIdToKey;
 
   public ProtectedDataPayload(byte[] devicePublicKey, byte[] macKey) {
     mDevicePublicKey = devicePublicKey;
     mMacKey = macKey;
-    mSignerIdToKey = new HashMap<String, byte[]>();
+    mSignerIdToKey = new HashMap<>();
   }
 
   /*
    * Construct a ProtectedDataPayload from the CBOR blob corresponding to this structured data.
    */
   public ProtectedDataPayload(
-      byte[] cborPayload, byte[] challenge, byte[] deviceInfo, AsymmetricCipherKeyPair eek)
-      throws CborException, CryptoException {
-    mSignerIdToKey = new HashMap<String, byte[]>();
-    decryptAndValidateProtectedData(cborPayload, challenge, deviceInfo, eek);
+      byte[] cborPayload, byte[] challenge, byte[] deviceInfo, byte[] macedKeysMac,
+      AsymmetricCipherKeyPair eek)
+        throws CborException, CryptoException {
+    mSignerIdToKey = new HashMap<>();
+    decryptAndValidateProtectedData(cborPayload, challenge, deviceInfo, macedKeysMac, eek);
+  }
+
+  public ProtectedDataPayload(
+      byte[] cborPayload, byte[] challenge, byte[] deviceInfo, byte[] macedKeysMac,
+      KeyPair eek)
+        throws CborException, CryptoException {
+    mSignerIdToKey = new HashMap<>();
+    decryptAndValidateProtectedData(cborPayload, challenge, deviceInfo, macedKeysMac, eek);
+  }
+
+  public static int getEcdhCurve(byte[] cborPayload) throws CborException {
+    return CborUtil.extractEcdhCurve(cborPayload);
   }
 
   /*
@@ -149,24 +163,8 @@ public class ProtectedDataPayload {
    */
   private OneKey verifyBccAndExtractDevicePublicKey(CBORObject bcc)
       throws CborException, CryptoException {
-    if (bcc.getType() != CBORType.Array) {
-      throw new CborException(
-          "BCC Type Wrong", CBORType.Array, bcc.getType(), CborException.TYPE_MISMATCH);
-    }
-    if (bcc.size() < BCC_LENGTH_MINIMUM) {
-      throw new CborException(
-          "BCC length smaller than minimum ",
-          BCC_LENGTH_MINIMUM,
-          bcc.size(),
-          CborException.INCORRECT_LENGTH);
-    }
-    if (bcc.get(BCC_DEVICE_PUBLIC_KEY_INDEX).getType() != CBORType.Map) {
-      throw new CborException(
-          "First entry in the BCC has the wrong type",
-          CBORType.Map,
-          bcc.get(BCC_DEVICE_PUBLIC_KEY_INDEX).getType(),
-          CborException.TYPE_MISMATCH);
-    }
+    CborUtil.checkArrayMinLength(bcc, BCC_LENGTH_MINIMUM, "BCC");
+    CborUtil.checkMap(bcc.get(BCC_DEVICE_PUBLIC_KEY_INDEX), "First entry in the BCC");
 
     // verify the certificate chain
     if (!CryptoUtil.validateBcc(bcc)) {
@@ -188,16 +186,16 @@ public class ProtectedDataPayload {
   private void extractAdditionalDkSignatures(
       CBORObject additionalDkSignatures, OneKey devicePublicKey)
       throws CborException, CryptoException {
-    if (additionalDkSignatures.getType() != CBORType.Map) {
-      throw new CborException(
-          "AdditionalDKSignatures in ProtectedDataPayload has the wrong type",
-          CBORType.Map,
-          additionalDkSignatures.getType(),
-          CborException.TYPE_MISMATCH);
-    }
+    CborUtil.checkMap(additionalDkSignatures, "AdditionalDkSignatures");
     if (additionalDkSignatures.size() > 0) {
-      for (CBORObject key : additionalDkSignatures.getKeys()) {
-        CBORObject certChain = additionalDkSignatures.get(key);
+      for (CBORObject issuer : additionalDkSignatures.getKeys()) {
+        if (issuer.getType() != CBORType.TextString) {
+          throw new CborException("additionalDkSignatures has the wrong type",
+              CBORType.TextString,
+              issuer.getType(),
+              CborException.TYPE_MISMATCH);
+        }
+        CBORObject certChain = additionalDkSignatures.get(issuer);
         if (certChain.getType() != CBORType.Array) {
           throw new CborException(
               "A DKCertChain is not properly encoded",
@@ -212,7 +210,6 @@ public class ProtectedDataPayload {
               certChain.size(),
               CborException.INCORRECT_LENGTH);
         }
-
         // Verify the root is self signed
         if (!CryptoUtil.verifyCert(
             certChain.get(ADDITIONAL_DK_SIGNATURE_ROOT_INDEX),
@@ -233,13 +230,24 @@ public class ProtectedDataPayload {
                 CryptoException.VERIFICATION_FAILURE);
           }
         }
-        EdDSAPublicKey oemRoot =
-            (EdDSAPublicKey)
-                CryptoUtil.getEd25519PublicKeyFromCert(
-                    certChain.get(ADDITIONAL_DK_SIGNATURE_ROOT_INDEX));
-        this.addSignerAndKey(key.AsString(), oemRoot.getAbyte());
+        byte[] oemRoot = CryptoUtil.getEd25519PublicKeyFromCert(
+                              certChain.get(ADDITIONAL_DK_SIGNATURE_ROOT_INDEX));
+        this.addSignerAndKey(issuer.AsString(), oemRoot);
       }
     }
+  }
+
+  private void decryptAndValidateProtectedData(
+      byte[] cborProtectedData, byte[] challenge, byte[] deviceInfo, byte[] macedKeysMac,
+      KeyPair eek) throws CborException, CryptoException {
+    CBORObject protectedDataPayload = CborUtil.decodeEncryptMessage(cborProtectedData, eek);
+    if (protectedDataPayload == null) {
+      throw new CborException(
+          "Failed to deserialize protected data payload from decrypted data",
+          CborException.DESERIALIZATION_ERROR);
+    }
+    validateProtectedData(
+        protectedDataPayload, challenge, deviceInfo, macedKeysMac);
   }
 
   /*
@@ -255,11 +263,10 @@ public class ProtectedDataPayload {
    *                   AAD
    *
    * @param eek The server X25519 key pair that will be used to decrypt the ProtectedData
-   *
-   * @return ProtectedDataPayload object that contains the MAC key and device public key
    */
   private void decryptAndValidateProtectedData(
-      byte[] cborProtectedData, byte[] challenge, byte[] deviceInfo, AsymmetricCipherKeyPair eek)
+      byte[] cborProtectedData, byte[] challenge, byte[] deviceInfo, byte[] macedKeysMac,
+      AsymmetricCipherKeyPair eek)
       throws CborException, CryptoException {
     CBORObject protectedDataPayload = CborUtil.decodeEncryptMessage(cborProtectedData, eek);
     if (protectedDataPayload == null) {
@@ -267,20 +274,22 @@ public class ProtectedDataPayload {
           "Failed to deserialize protected data payload from decrypted data",
           CborException.DESERIALIZATION_ERROR);
     }
+    validateProtectedData(
+        protectedDataPayload, challenge, deviceInfo, macedKeysMac);
+  }
 
+  private void validateProtectedData(
+      CBORObject protectedDataPayload, byte[] challenge, byte[] deviceInfo, byte[] macedKeysMac)
+      throws CborException, CryptoException {
     // Validate BCC chain, retrieve the device public key, and validate the MAC signature
-    if (protectedDataPayload.size() < PROTECTED_DATA_PAYLOAD_NUM_ENTRIES_MINIMUM) {
-      throw new CborException(
-          "Protected data payload incorrect minimum length:",
-          PROTECTED_DATA_PAYLOAD_NUM_ENTRIES_MINIMUM,
-          protectedDataPayload.size(),
-          CborException.INCORRECT_LENGTH);
-    }
+    CborUtil.checkArrayMinLength(
+        protectedDataPayload, PROTECTED_DATA_PAYLOAD_NUM_ENTRIES_MINIMUM, "ProtectedData");
 
     Sign1Message signedMac;
     try {
-      byte[] signedMacEncoded =
-          protectedDataPayload.get(PROTECTED_DATA_SIGNED_MAC_INDEX).EncodeToBytes();
+      CBORObject signedMacObj =
+          protectedDataPayload.get(PROTECTED_DATA_SIGNED_MAC_INDEX);
+      byte[] signedMacEncoded = signedMacObj.EncodeToBytes();
       signedMac = (Sign1Message) Message.DecodeFromBytes(signedMacEncoded, MessageTag.Sign1);
     } catch (CoseException e) {
       throw new CborException(
@@ -289,8 +298,10 @@ public class ProtectedDataPayload {
 
     // Build the Associated Authenticated Data
     CBORObject arr = CBORObject.NewArray();
-    arr.Add(CBORObject.DecodeFromBytes(deviceInfo));
     arr.Add(CBORObject.FromObject(challenge));
+    CBORObject deviceInfoObj = CBORObject.DecodeFromBytes(deviceInfo);
+    arr.Add(deviceInfoObj.get(DeviceInfo.DEVICE_INFO_VERIFIED));
+    arr.Add(CBORObject.FromObject(macedKeysMac));
     signedMac.setExternal(arr.EncodeToBytes());
 
     CBORObject bcc = protectedDataPayload.get(PROTECTED_DATA_BCC_INDEX);
@@ -312,8 +323,25 @@ public class ProtectedDataPayload {
     //       it will be the leaf key in the BCC, which is owned by the KeyMint instance that
     //       generated the key pairs in the CSR. This should be renamed to be more generic, with
     //       supporting functionality.
-    mDevicePublicKey = devicePublicKey.get(KeyKeys.OKP_X).ToObject(byte[].class);
-    mMacKey = CBORObject.DecodeFromBytes(signedMac.GetContent()).ToObject(byte[].class);
+    try {
+      if (devicePublicKey.get(KeyKeys.KeyType.AsCBOR()).equals(KeyKeys.KeyType_OKP)) {
+        mDevicePublicKey = devicePublicKey.get(KeyKeys.OKP_X).ToObject(byte[].class);
+      } else if (devicePublicKey.get(KeyKeys.KeyType.AsCBOR()).equals(KeyKeys.KeyType_EC2)) {
+        mDevicePublicKey = new byte[64];
+        byte[] xCoord = CborUtil.getSafeBstr(
+            devicePublicKey.get(KeyKeys.EC2_X.AsCBOR()), 32, "Device public key X-coordinate");
+        byte[] yCoord = CborUtil.getSafeBstr(
+            devicePublicKey.get(KeyKeys.EC2_Y.AsCBOR()), 32, "Device public key Y-coordinate");
+        System.arraycopy(xCoord, 0, mDevicePublicKey, 0, 32);
+        System.arraycopy(yCoord, 0, mDevicePublicKey, 32, 32);
+      } else {
+        throw new CborException("Unsupported key type", CborException.INCORRECT_COSE_TYPE);
+      }
+    } catch (CoseException e) {
+      throw new CborException("Failed to decode the device public key", e,
+          CborException.DESERIALIZATION_ERROR);
+    }
+    mMacKey = signedMac.GetContent();
     // Additional signatures are optional; they are only required in a solution where the
     // signer cannot upload public keys from the factory floor due to various restrictions
     // or obstacles they may deal with.

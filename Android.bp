@@ -44,7 +44,7 @@ java_library_host {
 
 java_library_host {
     name: "remote-provisioning-cbor",
-    srcs: ["src/**/*.java"],
+    srcs: ["java/**/*.java"],
     static_libs: ["cbor-cose",
                   "bouncy_castle_full",],
 }
